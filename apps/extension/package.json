@@ -25,12 +25,12 @@
   "devDependencies": {
     "@types/node": "^24.19.2",
     "@wxt-dev/module-vue": "^1.0.3",
-    "puppeteer": "^25.13.0",
+    "puppeteer": "^25.14.0",
     "typescript": "^6.0.3",
     "vite": "^8.1.5",
-    "vitest": "^5.0.4",
+    "vitest": "^5.0.5",
     "vue-tsc": "^3.2.5",
-    "web-ext": "^10.5.0",
+    "web-ext": "^10.8.0",
     "wxt": "^0.21.3"
   }
 }
