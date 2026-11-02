@@ -1,9 +1,10 @@
 import { findRule } from './edits';
 import { matchPatternToRegex, parseHttpUrl } from './match';
 import { levelFor, pathRegexSource } from './paths';
-import { sessionProfile } from './profiles';
+import { otherSitesLevel, sessionProfile } from './profiles';
 import { findRecipe } from './recipe';
 import { redirectSettingsFor } from './settings';
+import { ownSiteDomain, ownSiteRecipe } from './sites';
 import type { GateVisit, PassExpiry, Profile, Session, SiteLevel, SiteRecipe, WhyReason } from './types';
 
 /** Longest intention we keep. */
@@ -47,14 +48,33 @@ export interface RedirectRule {
   regexFilter: string;
   /** Send the visit to the Seiza page, or let it load even though a broader rule redirects it. */
   action: 'redirect' | 'allow';
-  /** Higher wins. Whole sites are 1; page rules rank above them, longer paths first. */
+  /**
+   * Higher wins. Every other site is 1, whole sites 2, and page rules rank above them, longer
+   * paths first.
+   */
   priority: number;
 }
 
 /**
+ * Every web address, for a profile that keeps every other site away. Addresses on this computer
+ * or the local network (`localAddresses`) are let through.
+ */
+export const everySite = '^https?://.*$';
+
+/**
+ * This computer and the local network: localhost, private IP addresses and `.local` names. No
+ * profile can list them (they aren't sites with an address), so they're never one of "every
+ * other site".
+ */
+export const localAddresses =
+  '^https?://(localhost|[^/:]+\\.(localhost|local)|127\\.[0-9.]+|10\\.[0-9.]+|192\\.168\\.[0-9.]+|172\\.(1[6-9]|2[0-9]|3[01])\\.[0-9.]+|\\[::1\\])(:[0-9]+)?([/?#].*)?$';
+
+/**
  * The rules that keep sites and pages from loading during the active session: redirected
  * ones without a pass, and restricted ones. Page rules that open a page inside a closed
- * site become allow rules, so the browser applies the same "most specific wins" order.
+ * site become allow rules, so the browser applies the same "most specific wins" order. When
+ * the profile keeps every other site away too, one rule covers them, and the sites it lets
+ * through (listed ones that are open, and unlisted ones with a pass) get allow rules above it.
  */
 export function redirectRules(options: {
   session: Session | null;
@@ -66,30 +86,50 @@ export function redirectRules(options: {
   const profile = sessionProfile(profiles, session);
   if (!session || !profile) return [];
 
-  return recipes.flatMap((recipe) => {
+  const others = otherSitesLevel(profile);
+  const othersClosed = accessFor(others, session, '', now) !== 'open';
+  // Sites nobody listed that got a pass from the redirect page, so they can be let through.
+  const passed = othersClosed
+    ? Object.keys(session.passes ?? {}).flatMap((id) => {
+        const domain = ownSiteDomain(id);
+        return domain && !recipes.some((recipe) => recipe.id === id) ? [ownSiteRecipe(domain)] : [];
+      })
+    : [];
+
+  const sites = [...recipes, ...passed].flatMap((recipe) => {
     const rule = findRule(profile, recipe.id);
-    if (!rule) return [];
+    // An unlisted site that's closed is already covered by the rule for every other site.
+    if (!rule && (!othersClosed || accessFor(others, session, recipe.id, now) !== 'open')) return [];
     const closed = (level: SiteLevel) => accessFor(level, session, recipe.id, now) !== 'open';
-    const pages = (rule.paths ?? []).map((page) => ({ path: page.path, closed: closed(page.level) }));
-    const siteClosed = closed(rule.level);
-    if (!siteClosed && !pages.some((page) => page.closed)) return [];
+    const pages = (rule?.paths ?? []).map((page) => ({ path: page.path, closed: closed(page.level) }));
+    const siteClosed = closed(rule?.level ?? others);
+    if (!siteClosed && !othersClosed && !pages.some((page) => page.closed)) return [];
 
     const regexes = (pathSource?: string) =>
       recipe.matches.flatMap((pattern) => matchPatternToRegex(pattern, pathSource) ?? []);
-    const site: RedirectRule[] = siteClosed
-      ? regexes().map((regexFilter) => ({ regexFilter, action: 'redirect', priority: 1 }))
-      : [];
+    // An open site only needs a rule of its own when every other site is closed.
+    const site: RedirectRule[] =
+      siteClosed || othersClosed
+        ? regexes().map((regexFilter) => ({ regexFilter, action: siteClosed ? 'redirect' : 'allow', priority: 2 }))
+        : [];
     return [
       ...site,
       ...pages.flatMap((page) =>
         regexes(`${pathRegexSource(page.path)}([?#].*)?`).map((regexFilter): RedirectRule => ({
           regexFilter,
           action: page.closed ? 'redirect' : 'allow',
-          priority: 2 + page.path.length,
+          priority: 3 + page.path.length,
         })),
       ),
     ];
   });
+  if (!othersClosed) return sites;
+  return [
+    { regexFilter: everySite, action: 'redirect', priority: 1 },
+    // At the same priority an allow rule beats a redirect, and a listed site still beats both.
+    { regexFilter: localAddresses, action: 'allow', priority: 1 },
+    ...sites,
+  ];
 }
 
 /** Gives the session a pass to one site, dropping any passes that have already run out. */

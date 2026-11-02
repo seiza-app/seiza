@@ -67,6 +67,7 @@ export {
   withSessionOverridesSaved,
   withSessionToggle,
   withRulesEdited,
+  withOtherSites,
   withSiteLevel,
   withStarColor,
   withStarterProfilesReset,
@@ -77,6 +78,7 @@ export {
   hasPass,
   maxIntentionLength,
   nextPassExpiry,
+  localAddresses,
   redirectRules,
   siteAccess,
   withGateVisit,
@@ -115,7 +117,7 @@ export {
   withOwnQuote,
   withOwnQuoteRemoved,
 } from './quotes';
-export { sessionProfile, starterProfiles } from './profiles';
+export { otherSitesLevel, sessionProfile, starterProfiles } from './profiles';
 export {
   hasRoomForOwnSite,
   isLooser,
@@ -123,6 +125,7 @@ export {
   ownSiteDomain,
   ownSiteId,
   ownSitePattern,
+  otherSiteLevels,
   ownSiteRecipe,
   siteDomain,
   siteFor,
@@ -131,6 +134,7 @@ export {
   siteRecipes,
   sitesLooser,
   withSiteRemoved,
+  type SiteList,
 } from './sites';
 export { glowColors, glowFor, nextGlow, unlockedGlows, type GlowColor } from './glow';
 export { hotkeyFromPress, hotkeyLabel, type KeyPress } from './hotkey';

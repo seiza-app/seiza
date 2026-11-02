@@ -3,7 +3,7 @@ use serde_json::{Map, Value};
 use ts_rs::TS;
 
 use crate::apps::AppRule;
-use crate::sites::SiteRule;
+use crate::sites::{self, SiteLevel, SiteList, SiteRule};
 use crate::timer::{Strictness, TimerSettings};
 
 /// The longest if-then plan, in characters, the same as `maxPlanLength` in core's settings.ts.
@@ -63,6 +63,39 @@ impl Profile {
         self.rest.insert("sites".into(), value);
     }
 
+    /// What the profile does with every site it doesn't list: allowed, unless it keeps them
+    /// away so that only the sites it allows get through (PLAN §7).
+    pub fn other_sites(&self) -> SiteLevel {
+        let saved = self.rest.get("otherSites").and_then(|v| SiteLevel::deserialize(v).ok());
+        sites::other_sites(saved)
+    }
+
+    /// Allowed, the default, isn't kept, as in the extension (`withOtherSites`).
+    pub fn set_other_sites(&mut self, level: SiteLevel) {
+        match sites::other_sites(Some(level)) {
+            SiteLevel::Allowed => self.rest.remove("otherSites"),
+            level => self.rest.insert(
+                "otherSites".into(),
+                serde_json::to_value(level).expect("levels serialize"),
+            ),
+        };
+    }
+
+    /// Whether this profile's sites let through anything `before`'s kept away (`sites::looser`).
+    pub fn sites_looser_than(&self, before: &Profile) -> bool {
+        let (old, new) = (before.sites(), self.sites());
+        sites::looser(
+            SiteList {
+                sites: &old,
+                others: before.other_sites(),
+            },
+            SiteList {
+                sites: &new,
+                others: self.other_sites(),
+            },
+        )
+    }
+
     /// The color of the profile's stars, if it was given one. The window picks a default
     /// otherwise (packages/core/src/sky.ts).
     pub fn star_color(&self) -> Option<String> {
@@ -104,9 +137,13 @@ impl Profile {
         self.rest.insert("askGoal".into(), on.into());
     }
 
-    /// Whether the profile tames, redirects or restricts any site or page, so it needs the
-    /// browser extension. A profile for writing in a desktop app might not.
+    /// Whether the profile tames, redirects or restricts any site or page (or every site it
+    /// doesn't list), so it needs the browser extension. A profile for writing in a desktop app
+    /// might not.
     pub fn tames_sites(&self) -> bool {
+        if self.other_sites() != SiteLevel::Allowed {
+            return true;
+        }
         let changes = |rule: &Value| {
             rule.get("level")
                 .and_then(Value::as_str)

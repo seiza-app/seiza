@@ -4,6 +4,7 @@ import {
   findPathRule,
   findRule,
   isLooser,
+  otherSitesLevel,
   ownSiteDomain,
   resolveToggles,
   sessionProfile,
@@ -47,6 +48,8 @@ const profile = computed(() =>
   props.session ? sessionProfile(props.profiles, props.session) : props.profiles.find((p) => p.id === editingId.value),
 );
 const rule = computed(() => findRule(profile.value, props.recipe.id));
+// A site the profile doesn't list is treated like every other site.
+const level = computed(() => rule.value?.level ?? otherSitesLevel(profile.value));
 const pageRule = computed(() => findPathRule(rule.value?.paths, props.path));
 // Toggles show whenever this page, or the site as a whole, is tamed.
 const showsToggles = computed(
@@ -89,13 +92,12 @@ function setAlways(on: boolean) {
 
 // What the picked level does, spelled out under the picker.
 const levelDetail = computed(() => {
-  const level = rule.value?.level ?? 'allowed';
-  if (level === 'tamed' && own.value) {
+  if (level.value === 'tamed' && own.value) {
     return hiddenCount.value
       ? `Stays open, with the ${hiddenCount.value === 1 ? 'part' : `${hiddenCount.value} parts`} you picked hidden.`
       : `Stays open. Pick the parts of ${props.recipe.name} to hide below.`;
   }
-  return siteLevels.find((l) => l.id === level)?.detail;
+  return siteLevels.find((l) => l.id === level.value)?.detail;
 });
 
 // The element picker hides parts of the page whenever the site is tamed. It runs on the page
@@ -105,7 +107,7 @@ const canPick = computed(
   () =>
     props.tabId !== undefined &&
     !needsReach.value &&
-    (when.value === 'none' ? allTheTime.value : !!profile.value && rule.value?.level === 'tamed'),
+    (when.value === 'none' ? allTheTime.value : !!profile.value && level.value === 'tamed'),
 );
 async function pickParts() {
   if (props.tabId === undefined) return;
@@ -120,7 +122,7 @@ async function pickParts() {
 }
 
 // During a session, a site that's open can be kept away for the rest of it, and later ones.
-const isOpen = computed(() => !isLooser('tamed', rule.value?.level ?? 'allowed'));
+const isOpen = computed(() => !isLooser('tamed', level.value));
 const canKeepAway = computed(() => !!props.session && !!profile.value && !pageRule.value && isOpen.value);
 async function keepAway(level: 'redirected' | 'restricted') {
   if (!profile.value) return;
@@ -202,7 +204,7 @@ function set(toggleId: string, value: boolean) {
         class="levels"
         :site-name="recipe.name"
         :can-tame="recipe.toggles.length > 0 || own"
-        :model-value="rule?.level ?? 'allowed'"
+        :model-value="level"
         @update:model-value="setLevel"
       />
       <p v-if="!session && profile" class="note detail">{{ levelDetail }}</p>
@@ -212,15 +214,15 @@ function set(toggleId: string, value: boolean) {
       </p>
 
       <template v-if="session && !pageRule">
-        <p v-if="rule?.level === 'redirected'" class="note">
+        <p v-if="level === 'redirected'" class="note">
           {{ recipe.name }} is redirected in {{ profile?.name ?? 'this profile'
           }}<template v-if="passMinutesLeft"> · pass ends in {{ passMinutesLeft }} min</template>.
         </p>
-        <p v-else-if="rule?.level === 'restricted'" class="note">
+        <p v-else-if="level === 'restricted'" class="note">
           {{ recipe.name }} is restricted in {{ profile?.name ?? 'this profile' }}, with no way through until the
           session ends.
         </p>
-        <p v-else-if="rule?.level !== 'tamed'" class="note">
+        <p v-else-if="level !== 'tamed'" class="note">
           {{ recipe.name }} {{ own ? 'is left alone' : "isn't tamed" }} in {{ profile?.name ?? 'this profile' }}.
         </p>
       </template>
@@ -231,7 +233,7 @@ function set(toggleId: string, value: boolean) {
         <button class="key" type="button" @click="keepAway('restricted')">Restrict it</button>
       </div>
 
-      <p v-if="needsReach && (rule?.level ?? 'allowed') !== 'allowed'" class="reach">
+      <p v-if="needsReach && level !== 'allowed'" class="reach">
         <span>Seiza can't reach {{ recipe.name }} yet, so it's left alone for now.</span>
         <button type="button" class="key lit save" @click="askToReach([recipe.name])">Let Seiza reach it</button>
       </p>

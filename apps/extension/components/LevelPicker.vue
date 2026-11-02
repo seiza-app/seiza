@@ -7,12 +7,16 @@ const props = defineProps<{
   siteName: string;
   /** Tamed does nothing for sites whose recipe has no toggles yet. */
   canTame: boolean;
+  /** Why Tamed can't be picked, in place of the usual line. */
+  tameDetail?: string;
 }>();
 const level = defineModel<SiteLevel>({ required: true });
 
 const levels = computed(() =>
   siteLevels.map((level) =>
-    level.id === 'tamed' && !props.canTame ? { ...level, detail: `Nothing to hide on ${props.siteName} yet.` } : level,
+    level.id === 'tamed' && !props.canTame
+      ? { ...level, detail: props.tameDetail ?? `Nothing to hide on ${props.siteName} yet.` }
+      : level,
   ),
 );
 const index = computed(() => levels.value.findIndex((l) => l.id === level.value));

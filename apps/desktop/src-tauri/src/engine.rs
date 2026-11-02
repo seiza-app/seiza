@@ -15,7 +15,7 @@ use crate::session::{
     starter_profiles, truncate,
 };
 use crate::settings::Settings;
-use crate::sites::{self, SiteRule, SiteSettings};
+use crate::sites::{self, SiteLevel, SiteRule, SiteSettings};
 use crate::store::{Store, Synced};
 use crate::sync::settings::SyncSettings;
 use crate::timer::{Strictness, TimerSettings};
@@ -126,6 +126,8 @@ pub struct ProfileSummary {
     pub apps: Vec<AppRule>,
     /// How it treats each site, set here or in the extension.
     pub sites: Vec<SiteRule>,
+    /// What it does with every site it doesn't list.
+    pub other_sites: SiteLevel,
     /// The color of its stars, if it was given one.
     pub star_color: Option<String>,
     /// Whether starting one of its sessions in the window asks for a goal.
@@ -286,6 +288,7 @@ impl Engine {
                     timer: p.timer(),
                     apps: p.apps(),
                     sites: p.sites(),
+                    other_sites: p.other_sites(),
                     star_color: p.star_color(),
                     ask_goal: p.asks_goal(),
                     plan: p.plan(),
@@ -565,22 +568,30 @@ impl Engine {
         )
     }
 
-    /// Changes how a profile treats sites. While one of its Hard sessions is running, they can
-    /// only get stricter.
-    pub fn set_profile_sites(&mut self, profile_id: &str, sites: Vec<SiteRule>, now: i64) -> Result<()> {
-        let sites = sites::tidy(sites);
+    /// Changes how a profile treats sites, and every site it doesn't list. While one of its Hard
+    /// sessions is running, they can only get stricter.
+    pub fn set_profile_sites(
+        &mut self,
+        profile_id: &str,
+        sites: Vec<SiteRule>,
+        others: SiteLevel,
+        now: i64,
+    ) -> Result<()> {
         let mut profiles = self.profiles.value.clone();
         let profile = profiles
             .iter_mut()
             .find(|p| p.id == profile_id)
             .ok_or(Error::UnknownProfile)?;
+        let mut edited = profile.clone();
+        edited.set_sites(&sites::tidy(sites));
+        edited.set_other_sites(others);
         let running = self.session().filter(|s| s.profile_id == profile_id);
         let hard = running.and_then(|s| s.lock(now)) == Some(Strictness::Hard);
         let in_use = running.and_then(|s| s.rules.as_ref()).unwrap_or(profile);
-        if hard && (sites::looser(&profile.sites(), &sites) || sites::looser(&in_use.sites(), &sites)) {
+        if hard && (edited.sites_looser_than(profile) || edited.sites_looser_than(in_use)) {
             return Err(Error::Locked);
         }
-        profile.set_sites(&sites);
+        *profile = edited;
         self.save_profiles(
             Synced {
                 value: profiles,
@@ -1402,10 +1413,6 @@ fn restamp(stamps: &mut BTreeMap<String, i64>, before: &[Profile], after: &[Prof
     }
 }
 
-/// Lays the extension's list of profiles over the one here. `based_on` is the version of this
-/// list the extension last took: what it changed since then wins, but a profile that changed
-/// here after that (from sync, say) stays as it is here, since the extension's list was made
-/// without it. So a profile that arrived as the extension saved its list isn't dropped.
 /// Makes the changes from `before` to `after` in `copy`, one top-level field at a time. With
 /// `hard`, changes that would loosen its sites or apps are left out.
 fn carry_edit(copy: &mut Profile, before: &Profile, after: &Profile, hard: bool) {
@@ -1420,7 +1427,15 @@ fn carry_edit(copy: &mut Profile, before: &Profile, after: &Profile, hard: bool)
         }
         let loosens = hard
             && match field.as_str() {
-                "sites" => sites::looser(&copy.sites(), &after.sites()),
+                // The two go together: whether a site's level loosens depends on every other site's.
+                "sites" | "otherSites" => {
+                    let mut edited = copy.clone();
+                    match new {
+                        Some(value) => edited.rest.insert(field.clone(), value.clone()),
+                        None => edited.rest.remove(field),
+                    };
+                    edited.sites_looser_than(copy)
+                }
                 "apps" => apps::looser(&copy.apps(), &after.apps()),
                 _ => false,
             };
@@ -1434,6 +1449,10 @@ fn carry_edit(copy: &mut Profile, before: &Profile, after: &Profile, hard: bool)
     }
 }
 
+/// Lays the extension's list of profiles over the one here. `based_on` is the version of this
+/// list the extension last took: what it changed since then wins, but a profile that changed
+/// here after that (from sync, say) stays as it is here, since the extension's list was made
+/// without it. So a profile that arrived as the extension saved its list isn't dropped.
 fn merge_from_extension(
     here: &[Profile],
     stamps: &BTreeMap<String, i64>,
@@ -2277,6 +2296,67 @@ mod tests {
             .unwrap();
         assert_eq!(engine.session().unwrap().rules, rules);
         assert!(engine.session_tames_sites(engine.session().unwrap()));
+    }
+
+    #[test]
+    fn every_other_site_only_gets_stricter_during_a_hard_session() {
+        use crate::sites::SiteLevel::*;
+        let site = |id: &str, level| SiteRule {
+            recipe_id: id.into(),
+            level,
+            toggles: None,
+            paths: None,
+        };
+        let mut engine = hard_engine();
+        let docs = vec![site("site:docs.com", Allowed)];
+        engine
+            .set_profile_sites("deep-work", docs.clone(), Restricted, 1)
+            .unwrap();
+        let profile = engine.profile("deep-work").unwrap();
+        assert_eq!((profile.sites(), profile.other_sites()), (docs.clone(), Restricted));
+        assert_eq!(engine.snapshot(1).profiles[1].other_sites, Restricted);
+        assert!(profile.tames_sites());
+
+        engine.start_session("deep-work", 0).unwrap();
+        // Taking a site off is stricter while every other site is restricted, and reaches the session.
+        engine.set_profile_sites("deep-work", vec![], Restricted, MIN).unwrap();
+        assert_eq!(engine.rules_of(engine.session().unwrap()).unwrap().sites(), vec![]);
+        for (sites, others) in [(vec![], Redirected), (vec![site("reddit", Tamed)], Restricted)] {
+            assert!(matches!(
+                engine.set_profile_sites("deep-work", sites, others, MIN),
+                Err(Error::Locked)
+            ));
+        }
+
+        // The extension can't loosen it either: the session keeps its copy.
+        let based_on = engine.profiles.updated_at;
+        let mut list = engine.profiles.value.clone();
+        list.iter_mut()
+            .find(|p| p.id == "deep-work")
+            .unwrap()
+            .set_other_sites(Allowed);
+        let looser = Synced {
+            value: list,
+            updated_at: 2 * MIN,
+        };
+        engine
+            .apply_remote(Some(looser), Some(based_on), None, 2 * MIN)
+            .unwrap();
+        let running = engine.session().unwrap();
+        assert_eq!(engine.rules_of(running).unwrap().other_sites(), Restricted);
+
+        // Once the timer's done, anything goes, and Allowed isn't kept.
+        engine
+            .set_profile_sites("deep-work", vec![], Redirected, 60 * MIN)
+            .unwrap();
+        engine
+            .set_profile_sites("deep-work", vec![], Allowed, 60 * MIN)
+            .unwrap();
+        assert_eq!(
+            engine.rules_of(engine.session().unwrap()).unwrap().other_sites(),
+            Allowed
+        );
+        assert!(!engine.profile("deep-work").unwrap().rest.contains_key("otherSites"));
     }
 
     #[test]

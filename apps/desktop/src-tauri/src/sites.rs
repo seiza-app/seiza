@@ -198,29 +198,59 @@ fn is_site_id(id: &str) -> bool {
     }
 }
 
-/// Whether `new` lets through anything `old` kept away: a site or page at a looser level, or
-/// one taken off. A new page rule can't be looser than anything already set on its site. Not
-/// allowed during a Hard session. The extension checks the same (packages/core/src/sites.ts).
-pub fn looser(old: &[SiteRule], new: &[SiteRule]) -> bool {
+/// A profile's sites, and what it does with every site it doesn't list ("Every other site").
+#[derive(Clone, Copy, Debug)]
+pub struct SiteList<'a> {
+    pub sites: &'a [SiteRule],
+    pub others: SiteLevel,
+}
+
+/// What a profile does with every site it doesn't list, from what's saved: redirected or
+/// restricted, or else allowed. Tamed isn't one, since there's no recipe to tame them with. The
+/// extension reads it the same way (`otherSitesLevel` in packages/core/src/profiles.ts).
+pub fn other_sites(saved: Option<SiteLevel>) -> SiteLevel {
+    match saved {
+        Some(level @ (SiteLevel::Redirected | SiteLevel::Restricted)) => level,
+        _ => SiteLevel::Allowed,
+    }
+}
+
+/// Whether `new` lets through anything `old` kept away: a site or page at a looser level, one
+/// taken off (so it's treated like every other site), one added at a looser level than every
+/// other site, or every other site loosened. A new page rule can't be looser than anything
+/// already set on its site. Not allowed during a Hard session. The extension checks the same
+/// (packages/core/src/sites.ts).
+pub fn looser(old: SiteList, new: SiteList) -> bool {
+    if new.others < old.others {
+        return true;
+    }
     let same_path = |a: &PathRule, b: &PathRule| a.path.eq_ignore_ascii_case(&b.path);
-    old.iter().any(|before| {
-        let kept = new.iter().find(|site| site.recipe_id == before.recipe_id);
-        let level = kept.map_or(SiteLevel::Allowed, |site| site.level);
-        let old_pages = before.paths.as_deref().unwrap_or_default();
+    let mut ids: Vec<&str> = old
+        .sites
+        .iter()
+        .chain(new.sites)
+        .map(|s| s.recipe_id.as_str())
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids.into_iter().any(|id| {
+        let before = old.sites.iter().find(|site| site.recipe_id == id);
+        let kept = new.sites.iter().find(|site| site.recipe_id == id);
+        // A site that isn't listed is treated like every other site, with no page rules.
+        let old_level = before.map_or(old.others, |site| site.level);
+        let level = kept.map_or(new.others, |site| site.level);
+        let old_pages = before.and_then(|site| site.paths.as_deref()).unwrap_or_default();
         let pages = kept.and_then(|site| site.paths.as_deref()).unwrap_or_default();
 
         let page_loosened = old_pages.iter().any(|page| {
             let now = pages.iter().find(|p| same_path(p, page)).map_or(level, |p| p.level);
             now < page.level
         });
-        let strictest = old_pages
-            .iter()
-            .map(|page| page.level)
-            .fold(before.level, SiteLevel::max);
+        let strictest = old_pages.iter().map(|page| page.level).fold(old_level, SiteLevel::max);
         let new_page_looser = pages
             .iter()
             .any(|page| !old_pages.iter().any(|p| same_path(p, page)) && page.level < strictest);
-        level < before.level || page_loosened || new_page_looser
+        level < old_level || page_loosened || new_page_looser
     })
 }
 
@@ -228,6 +258,14 @@ pub fn looser(old: &[SiteRule], new: &[SiteRule]) -> bool {
 mod tests {
     use super::*;
     use SiteLevel::*;
+
+    fn list(sites: &[SiteRule]) -> SiteList<'_> {
+        allowlist(sites, Allowed)
+    }
+
+    fn allowlist(sites: &[SiteRule], others: SiteLevel) -> SiteList<'_> {
+        SiteList { sites, others }
+    }
 
     fn site(id: &str, level: SiteLevel, paths: &[(&str, SiteLevel)]) -> SiteRule {
         SiteRule {
@@ -343,13 +381,13 @@ mod tests {
             site("youtube", Tamed, &[("/shorts", Restricted)]),
             site("site:a.com", Redirected, &[]),
         ];
-        assert!(!looser(&old, &old));
+        assert!(!looser(list(&old), list(&old)));
         let new = vec![
             site("youtube", Redirected, &[("/SHORTS", Restricted)]),
             site("site:a.com", Restricted, &[]),
             site("site:b.com", Redirected, &[]),
         ];
-        assert!(!looser(&old, &new));
+        assert!(!looser(list(&old), list(&new)));
     }
 
     #[test]
@@ -359,13 +397,44 @@ mod tests {
             site("site:a.com", Redirected, &[]),
         ];
         let youtube = |paths: &[(&str, SiteLevel)]| vec![site("youtube", Tamed, paths), old[1].clone()];
-        assert!(looser(&old, &[old[0].clone()]));
-        assert!(looser(&old, &[old[0].clone(), site("site:a.com", Allowed, &[])]));
-        assert!(looser(&old, &youtube(&[("/shorts", Redirected)])));
-        assert!(looser(&old, &youtube(&[])));
+        assert!(looser(list(&old), list(&[old[0].clone()])));
         assert!(looser(
-            &old,
-            &youtube(&[("/shorts", Restricted), ("/shorts/abc", Tamed)])
+            list(&old),
+            list(&[old[0].clone(), site("site:a.com", Allowed, &[])])
         ));
+        assert!(looser(list(&old), list(&youtube(&[("/shorts", Redirected)]))));
+        assert!(looser(list(&old), list(&youtube(&[]))));
+        assert!(looser(
+            list(&old),
+            list(&youtube(&[("/shorts", Restricted), ("/shorts/abc", Tamed)]))
+        ));
+    }
+
+    #[test]
+    fn every_other_site_counts_for_sites_added_or_taken_off() {
+        let docs = vec![site("site:docs.com", Allowed, &[])];
+        // Every other site loosened.
+        assert!(looser(allowlist(&docs, Restricted), allowlist(&docs, Redirected)));
+        assert!(looser(allowlist(&docs, Restricted), list(&docs)));
+        assert!(!looser(list(&docs), allowlist(&docs, Restricted)));
+        // A site added looser than every other site, or with a looser page.
+        let mut more = docs.clone();
+        more.push(site("reddit", Tamed, &[]));
+        assert!(looser(allowlist(&docs, Restricted), allowlist(&more, Restricted)));
+        more[1] = site("reddit", Restricted, &[("/r/a", Allowed)]);
+        assert!(looser(allowlist(&docs, Restricted), allowlist(&more, Restricted)));
+        more[1] = site("reddit", Restricted, &[]);
+        assert!(!looser(allowlist(&docs, Restricted), allowlist(&more, Restricted)));
+        // Taken off, a site joins every other site.
+        assert!(!looser(allowlist(&docs, Restricted), allowlist(&[], Restricted)));
+        let restricted = vec![site("x", Restricted, &[])];
+        assert!(looser(allowlist(&restricted, Redirected), allowlist(&[], Redirected)));
+    }
+
+    #[test]
+    fn every_other_site_is_never_tamed() {
+        assert_eq!(other_sites(None), Allowed);
+        assert_eq!(other_sites(Some(Tamed)), Allowed);
+        assert_eq!(other_sites(Some(Restricted)), Restricted);
     }
 }

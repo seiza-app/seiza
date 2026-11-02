@@ -3,6 +3,7 @@ import type {
   AppRule,
   Constellation,
   GateVisitRecord,
+  OtherSitesLevel,
   SatelliteAction,
   SatelliteState,
   SessionRecord,
@@ -562,7 +563,9 @@ async function run(action: () => Promise<void>) {
           @set-ask-goal="(id: string, on: boolean) => run(() => setProfileAsksGoal(id, on))"
           @set-timer="(id: string, timer: TimerSettings) => run(() => setProfileTimer(id, timer))"
           @set-apps="(id: string, apps: AppRule[]) => run(() => setProfileApps(id, apps))"
-          @set-sites="(id: string, sites: SiteRule[]) => run(() => setProfileSites(id, sites))"
+          @set-sites="
+            (id: string, sites: SiteRule[], others: OtherSitesLevel) => run(() => setProfileSites(id, sites, others))
+          "
           @set-plan="(id: string, plan: string) => run(() => setProfilePlan(id, plan))"
           @set-star-color="(id: string, color: string) => run(() => setProfileStarColor(id, color))"
         />

@@ -105,15 +105,16 @@ describe('own sites', () => {
 });
 
 describe('sitesLooser', () => {
+  const looser = (a: SiteRule[], b: SiteRule[]) => sitesLooser({ sites: a }, { sites: b });
   const before: SiteRule[] = [
     { recipeId: 'youtube', level: 'tamed', paths: [{ path: '/shorts', level: 'restricted' }] },
     { recipeId: 'site:example.com', level: 'redirected' },
   ];
 
   it('allows anything stricter, and new sites', () => {
-    expect(sitesLooser(before, before)).toBe(false);
+    expect(looser(before, before)).toBe(false);
     expect(
-      sitesLooser(before, [
+      looser(before, [
         { recipeId: 'youtube', level: 'redirected', paths: [{ path: '/shorts', level: 'restricted' }] },
         { recipeId: 'site:example.com', level: 'restricted' },
         { recipeId: 'site:new.com', level: 'redirected' },
@@ -122,8 +123,8 @@ describe('sitesLooser', () => {
   });
 
   it('catches a site loosened or taken off', () => {
-    expect(sitesLooser(before, [before[0]!, { recipeId: 'site:example.com', level: 'allowed' }])).toBe(true);
-    expect(sitesLooser(before, [before[0]!])).toBe(true);
+    expect(looser(before, [before[0]!, { recipeId: 'site:example.com', level: 'allowed' }])).toBe(true);
+    expect(looser(before, [before[0]!])).toBe(true);
   });
 
   it('catches a page loosened, taken off, or opened inside a stricter site', () => {
@@ -131,11 +132,11 @@ describe('sitesLooser', () => {
       { recipeId: 'youtube', level: 'tamed', paths },
       before[1]!,
     ];
-    expect(sitesLooser(before, youtube([{ path: '/shorts', level: 'redirected' }]))).toBe(true);
-    expect(sitesLooser(before, youtube([]))).toBe(true);
-    expect(sitesLooser(before, youtube([{ path: '/SHORTS', level: 'restricted' }]))).toBe(false);
+    expect(looser(before, youtube([{ path: '/shorts', level: 'redirected' }]))).toBe(true);
+    expect(looser(before, youtube([]))).toBe(true);
+    expect(looser(before, youtube([{ path: '/SHORTS', level: 'restricted' }]))).toBe(false);
     expect(
-      sitesLooser(
+      looser(
         before,
         youtube([
           { path: '/shorts', level: 'restricted' },
@@ -143,5 +144,40 @@ describe('sitesLooser', () => {
         ]),
       ),
     ).toBe(true);
+  });
+
+  describe('with every other site kept away', () => {
+    const allowlist = (sites: SiteRule[], otherSites: Profile['otherSites'] = 'restricted') => ({ sites, otherSites });
+    const docs: SiteRule = { recipeId: 'site:docs.com', level: 'allowed' };
+
+    it('catches every other site loosened', () => {
+      expect(sitesLooser(allowlist([docs]), allowlist([docs], 'redirected'))).toBe(true);
+      expect(sitesLooser(allowlist([docs]), { sites: [docs] })).toBe(true);
+      expect(sitesLooser(allowlist([docs], 'redirected'), allowlist([docs]))).toBe(false);
+      expect(sitesLooser({ sites: [docs] }, allowlist([docs]))).toBe(false);
+    });
+
+    it('catches a site added at a looser level than every other site', () => {
+      expect(sitesLooser(allowlist([docs]), allowlist([docs, { recipeId: 'reddit', level: 'tamed' }]))).toBe(true);
+      expect(sitesLooser(allowlist([docs]), allowlist([docs, { recipeId: 'reddit', level: 'restricted' }]))).toBe(
+        false,
+      );
+      expect(
+        sitesLooser(
+          allowlist([docs]),
+          allowlist([docs, { recipeId: 'reddit', level: 'restricted', paths: [{ path: '/r/a', level: 'allowed' }] }]),
+        ),
+      ).toBe(true);
+    });
+
+    it('lets a site be taken off, since it then joins every other site', () => {
+      expect(sitesLooser(allowlist([docs]), allowlist([]))).toBe(false);
+      expect(sitesLooser(allowlist([docs], 'redirected'), allowlist([]))).toBe(false);
+      const redirected: SiteRule = { recipeId: 'x', level: 'redirected' };
+      expect(sitesLooser(allowlist([redirected]), allowlist([]))).toBe(false);
+      expect(sitesLooser(allowlist([redirected], 'redirected'), allowlist([], 'redirected'))).toBe(false);
+      const restricted: SiteRule = { recipeId: 'x', level: 'restricted' };
+      expect(sitesLooser(allowlist([restricted], 'redirected'), allowlist([], 'redirected'))).toBe(true);
+    });
   });
 });
