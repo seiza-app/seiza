@@ -26,6 +26,7 @@ export type * from './generated/Snapshot';
 export type * from './generated/Strictness';
 export type * from './generated/TimerEnd';
 export type * from './generated/TimerSettings';
+export type * from './generated/UpdateStatus';
 export { backupDay, importSummary, maxBackupBytes } from './backup';
 export { matchesPattern, matchPatternToRegex, parseHttpUrl } from './match';
 export {

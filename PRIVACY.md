@@ -30,7 +30,11 @@ On macOS, if you turn on blocking sites without the extension, the app lists you
 
 ## Network
 
-Neither the app nor the extension makes network requests. The quotes are bundled with the app. Links you add yourself, like the support link or your own links on the redirect page, open in your browser like any other link.
+The extension makes no network requests.
+
+The app makes one: unless you turn it off in Settings › Updates, it asks GitHub once a day whether there's a new version of Seiza, by downloading a small file (`latest.json`) from the project's releases. The request carries nothing about you or what you do in Seiza, though like any web request it shows GitHub your IP address ([GitHub's privacy statement](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement) covers what GitHub keeps). If you update, the new version downloads from GitHub too, and the app checks its signature before installing it. Seiza 0.1.0 doesn't check for updates.
+
+The quotes are bundled with the app. Links you add yourself, like the support link or your own links on the redirect page, open in your browser like any other link.
 
 ## Changes
 
@@ -40,4 +44,4 @@ If this ever changes, this page changes first, with the date below. The source c
 
 Questions go to the repository's issues: <https://github.com/seiza-app/seiza/issues>.
 
-Last updated: 30 October 2026.
+Last updated: 2 November 2026.

@@ -34,7 +34,9 @@ updates:
       cargo:
         patterns: ['*']
     ignore:
-      # zbus 6 moved the blocking API that idle.rs uses on Linux, so it's a change by hand, not a bump.
+      # idle.rs stays on zbus 5 while Tauri's plugins (notification, opener, single-instance) do:
+      # moving alone would build two copies of zbus on Linux. zbus 6 also drops the blocking API
+      # it uses, so the move is a change by hand (zbus::block_on), not a bump.
       - dependency-name: zbus
         update-types: [version-update:semver-major]
 

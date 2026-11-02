@@ -3,6 +3,11 @@ name: Release
 # Pushing a version tag (v0.1.0) builds the desktop app for macOS and Linux and puts it on a
 # draft GitHub release, with the install steps from release-notes.md. Nothing is published
 # until someone reads the draft and clicks Publish.
+#
+# The builds are also signed for the app's updater (updates.rs), with the private key in the
+# TAURI_SIGNING_PRIVATE_KEY secret (and its password in TAURI_SIGNING_PRIVATE_KEY_PASSWORD). The
+# last job writes latest.json, which installed copies check once a day. GitHub's
+# releases/latest link only follows published releases, so a draft reaches nobody.
 on:
   push:
     tags: ['v*']
@@ -31,6 +36,14 @@ jobs:
           version=$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)
           if [ "$GITHUB_REF_NAME" != "v$version" ]; then
             echo "::error::Tag $GITHUB_REF_NAME doesn't match tauri.conf.json's version $version"
+            exit 1
+          fi
+
+      # Without the public key, installed copies couldn't check the updates they download.
+      - name: The updater has its public key
+        run: |
+          if [ -z "$(jq -r '.plugins.updater.pubkey // empty' apps/desktop/src-tauri/tauri.conf.json)" ]; then
+            echo "::error::tauri.conf.json has no updater public key (plugins.updater.pubkey)"
             exit 1
           fi
 
@@ -68,14 +81,19 @@ jobs:
       # Not signed with an Apple Developer ID, only ad hoc (tauri.conf.json), which Apple
       # silicon needs to run it at all. macOS asks people to allow it once, as release-notes.md
       # explains. Tauri skips arranging the disk image's Finder window when CI is set, as it is
-      # on GitHub's runners; that step needs a logged-in desktop.
-      - run: pnpm --filter @lock-in/desktop tauri build --target universal-apple-darwin --bundles dmg
+      # on GitHub's runners; that step needs a logged-in desktop. The app bundle is also packed
+      # as Seiza.app.tar.gz with its signature, for the updater.
+      - env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm --filter @lock-in/desktop tauri build --target universal-apple-darwin --bundles app,dmg
 
       - env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          bundle=apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle
           gh release upload "$GITHUB_REF_NAME" \
-            apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            "$bundle"/dmg/*.dmg "$bundle"/macos/*.app.tar.gz "$bundle"/macos/*.app.tar.gz.sig
 
   linux:
     needs: draft
@@ -104,12 +122,51 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch
 
-      # A .deb for Debian and Ubuntu, and an AppImage that runs on most other distributions.
-      - run: pnpm --filter @lock-in/desktop tauri build --bundles deb,appimage
+      # A .deb for Debian and Ubuntu, and an AppImage that runs on most other distributions, each
+      # with its signature for the updater.
+      - env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm --filter @lock-in/desktop tauri build --bundles deb,appimage
 
       - env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          bundle=apps/desktop/src-tauri/target/release/bundle
           gh release upload "$GITHUB_REF_NAME" \
-            apps/desktop/src-tauri/target/release/bundle/deb/*.deb \
-            apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
+            "$bundle"/deb/*.deb "$bundle"/deb/*.deb.sig \
+            "$bundle"/appimage/*.AppImage "$bundle"/appimage/*.AppImage.sig
+
+  # What installed copies check for a new version. Each install finds its own kind first (like
+  # linux-x86_64-deb) and falls back to the plain name. Both Macs get the universal app. If any
+  # signature is missing, this fails rather than leave some installs without updates.
+  manifest:
+    needs: [macos, linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern '*.sig' --dir sigs
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"
+          entry() {
+            name=$(cd sigs && ls -- *"$1".sig)
+            jq -n --arg url "$base/${name%.sig}" --rawfile sig "sigs/$name" \
+              '{url: $url, signature: ($sig | rtrimstr("\n"))}'
+          }
+          app=$(entry .app.tar.gz)
+          appimage=$(entry .AppImage)
+          deb=$(entry .deb)
+          jq -n --arg version "${GITHUB_REF_NAME#v}" --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --argjson app "$app" --argjson appimage "$appimage" --argjson deb "$deb" \
+            '{version: $version, pub_date: $date, platforms: {
+              "darwin-aarch64-app": $app, "darwin-x86_64-app": $app,
+              "darwin-aarch64": $app, "darwin-x86_64": $app,
+              "linux-x86_64-appimage": $appimage, "linux-x86_64-deb": $deb,
+              "linux-x86_64": $appimage
+            }}' > latest.json
+          cat latest.json
+          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" latest.json

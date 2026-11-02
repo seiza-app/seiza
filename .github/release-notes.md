@@ -14,6 +14,12 @@ macOS remembers this for this version. A new version may ask again.
 
 Both are for 64-bit Intel and AMD computers, and need a distribution from 2024 or later (Ubuntu 24.04, Debian 13, Fedora 40). Blocking sites without the browser extension is macOS-only for now.
 
+## Updating
+
+Seiza checks GitHub once a day for a new version and offers it once on the Sky. After that it waits in **Settings › Updates**, where **Update and restart** installs it between sessions. You can turn the daily check off there too.
+
+Seiza 0.1.0 can't update itself, so if you have it, download this version and install it over the top, as above.
+
 ## The browser extension
 
 The app works on its own, and with the extension it also tames, redirects and restricts sites in your browser:

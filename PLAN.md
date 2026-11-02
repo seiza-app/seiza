@@ -373,6 +373,26 @@ lock-in/
 - Extension: `pnpm dlx wxt@latest init apps/extension` → template **vue**, package manager pnpm.
 - Packages: `packages/core` (plain TS package; the others depend on it via `workspace:*`). `recipes` and `quotes` start as JSON folders.
 
+### Updates (next; easy and quiet)
+Today the extension updates itself through the stores, but updating the app means downloading the new release by hand. The goal is one click, and knowing a new version is out without being nagged about it.
+- **The app checks on its own,** once a day while it's open. A check is one HTTPS request for `latest.json` on GitHub Releases. Nothing about you goes with it beyond what any web request carries (your IP address, to GitHub). Settings › Updates has a switch, **Check for updates automatically**, to turn it off, and a **Check now** button either way.
+- **Offered once per version.** When a new version is found, the Sky shows one quiet line, like the tour's offer: the version, **What's new**, **Update and restart** and **Later**. Choosing **Later** (or updating) means that version isn't offered again; the next version is.
+- **Then it stays in Settings.** Until you update, the Settings tab keeps a small dot, and Settings › Updates shows the version, what's new and **Update and restart**, so updating right away is always one click away.
+- **Between sessions only:** during a session the offer waits, and the button in Settings says it waits until the session ends, since restarting would drop the session's blocking.
+- **How it installs:** Tauri's updater plugin (`tauri-plugin-updater`) downloads the new build, checks its signature against the public key in `tauri.conf.json`, replaces the app and restarts it. macOS gets the universal `.app.tar.gz`, Linux the AppImage in place, and a `.deb` installs with `dpkg` after the system asks for a password. Signatures record the version (`requireSignedVersion`), so an old signed build can't be passed off as a new one. Copies not installed from a release (`tauri dev`) link to the download instead.
+- **The blocker helper** (§8, Blocking without the extension) is a copy of the app, so after an update it's the old version. The app compares versions and, between sessions, asks to update the helper (macOS asks for the administrator password again). Until then the old helper keeps working.
+- **On the release side:**
+  - A signing key pair from `tauri signer generate`. The private key and its password become GitHub Actions secrets, which you create and add. Keep a backup: losing the key means existing installs can never update again.
+  - `createUpdaterArtifacts: true`, so `release.yml` also uploads the `.app.tar.gz` and AppImage with their `.sig` files.
+  - A step that writes `latest.json` (darwin-aarch64 and darwin-x86_64 both pointing at the universal build, plus linux-x86_64). `releases/latest` only follows published releases, so nothing reaches anyone until the draft is published.
+- **0.1.0 can't update itself.** People on it download the next version once by hand; the release notes and the website say so.
+- **Before shipping:**
+  - Test on a real Mac that an app signed ad hoc and replaced in place still opens without a second **Open Anyway**.
+  - Update `PRIVACY.md`'s Network section, which today says the app makes no network requests.
+  - Check that the plugin's crate and npm package are at least two weeks old.
+- **Later, maybe:** our own Homebrew tap (`brew upgrade`), since the main Homebrew list expects notarized apps.
+- **To decide:** whether a check also warns when the linked extension is too old for the app.
+
 ### Sync (later, optional, privacy-preserving)
 - **Local-first always.** Every feature works with no account, and with sync off (the default) the app makes no requests for it.
 - **Self-hosted first:** an open-source `sync-server` (Rust + SQLite, one Docker image, which also fits a Proxmox LXC behind a Cloudflare Tunnel). It's written so a hosted tier could run the same image unchanged, so self-hosting is never second-class.
@@ -507,6 +527,8 @@ Built in slices, one PR each:
   - Copy that's out of date after the sync and habit goals planning (§8, §12): the sync note (`SyncNote.vue`) still promises hosting "for a small fee", but sync is self-hosted first and a hosted tier only maybe later; and Why it works (`why-it-works.vue`) still calls habit goals parked, when they've been dropped as out of scope.
 - Constellation sharing endpoint.
 - Sync between devices (§8, Sync): self-hosted first, starting with the session log, trips and constellation names, in the build order there. Profiles and live sessions straight after, then satellites; a hosted tier maybe later.
+
+**Next: easy app updates** (§8, Updates): a daily update check you can turn off, each new version offered once on the Sky and then kept in Settings with a dot, and one-click Update and restart between sessions; signed update builds and `latest.json` from `release.yml`.
 
 **Later: the observing spot** (once the art style is chosen)
 - Your spot, the town on the horizon, decorations and companions, bought with stardust or found in rare events (§5).
