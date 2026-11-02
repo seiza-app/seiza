@@ -113,7 +113,7 @@ The timer is a *starting ramp*, not a cage.
   - *Alert*: sound + notification
 - **"Show time since done" setting** (off by default): when on, a finished timer shows "Done · 37 min ago" and keeps counting up, so you can see how much extra you did. When off, it simply shows "Done".
 - **Secret overtime bonus:** overtime is always tracked, whichever setting you choose. Minutes after the timer ends count **1.5×**. This is never announced. It shows up only as that session's star twinkling a little brighter in your sky and as extra stardust (§5), a little discovery for later.
-- **Anti-gaming:** a session ends when you stop it, or automatically after N minutes of system idle (no keyboard or mouse). The idle tail isn't counted, so a forgotten timer doesn't farm overtime.
+- **Anti-gaming:** a session ends when you stop it, or automatically after N minutes of system idle (no keyboard or mouse; planned to be off by default, §9). The idle tail isn't counted, so a forgotten timer doesn't farm overtime.
 
 ---
 
@@ -379,7 +379,7 @@ lock-in/
 - **End-to-end encrypted:** the server only stores ciphertext.
 - **A hosted tier maybe later** (Obsidian Sync-style), decided once self-hosting has proven itself. If it comes, it's the same image and nothing is gated; paying only buys convenience. **AGPL fits this model:** anyone running a modified sync server for others must publish their changes, and as the copyright holder you can still run the hosted tier.
 - **Decided in planning (November 2026):**
-  - **What syncs first:** the session log (with goals), trips to sites and constellation names, so every device draws the same stars, comets and weekly report: a session finished on the work computer shows up on the personal one, in its star, the streak, today's time and the report. Satellites come in a later step, then live sessions (start Deep Work on one computer and it starts everywhere) and profiles.
+  - **What syncs first:** the session log (with goals), trips to sites and constellation names, so every device draws the same stars, comets and weekly report: a session finished on the work computer shows up on the personal one, in its star, the streak, today's time and the report. Profiles and live sessions come straight after (below), and satellites after those.
   - **Joining, with no account.** Settings › Sync › **Use your own server** takes the server's address, then **Start a new sync group** or **Join with a pairing code**. On a device already in the group, **Add a device** shows a short code (four words and a digit, e.g. `7-orbit-lantern-quiet`), single use and valid for 5 minutes. Once it's typed on the new device, the existing one asks "Add *MacBook Air*?" with **Add** and **Don't add**. Settings › Sync lists the devices with when each was last seen and a **Remove** on each, so a lost laptop can be removed from any other device. Each device has its own random token for the server.
   - **How the key reaches a new device.** The group has one key the server never sees. The two devices use the pairing code in a PAKE (SPAKE2, RustCrypto's `spake2` crate) through the server to agree on a one-off encrypted channel, and the key travels inside it, so the server can't learn it even though the code is short. To get right:
     - A maintained, reviewed crate for the PAKE, never our own; the rest is a standard AEAD (XChaCha20-Poly1305, with random nonces so two devices never reuse one) and a KDF.
@@ -391,7 +391,14 @@ lock-in/
   - **On the wire:** each device uploads its new and changed records as encrypted batches, and the server keeps each group's batches in order and hands a device the ones it hasn't seen. The server can see the group, the device, sizes and times, and nothing else.
   - **Conflicts: newest wins per record,** as on the extension's link (§8): every synced record carries its own `updated_at`. An answered "Did you do it?" beats an unanswered one whatever the time, and a cleared constellation name is kept as cleared so it doesn't come back. Nothing synced is ever deleted, and sample data never syncs.
   - **One sky.** The device that starts the group shares its sky secret, inside the encrypted data. A device that joins with sessions of its own takes it, so its past rare events and comets are drawn again once; stars, constellations and planets don't use the secret, so they stay. Before joining it says so in plain words, with **Join and match the sky** and **Cancel**. When the Sky last showed new things stays per device, so the redrawn events don't all play at once. (Merging two logs can also move personal bests and add moons, whatever the secret.)
-  - **When it syncs, within the battery budget (above):** no timers while idle. A device sends after a session ends, a goal is answered or a constellation is named, and fetches when the window opens and when a session starts or ends.
+  - **When it syncs, within the battery budget (above):** no timers. For stats, a device sends after a session ends, a goal is answered or a constellation is named, and fetches when the window opens and when a session starts or ends. Live sessions add one quiet connection (below), which stats then use too.
+  - **Live sessions, straight after stats:** start Deep Work on one computer and it starts on all of them.
+    - **Profiles sync just before:** edit a profile on one computer and it changes on all of them (newest wins per profile, a deleted one kept as deleted), so every computer has every profile and every star's color. Settings stay per computer. A running session carries a copy of its rules, so editing its profile elsewhere mid-session, or loosening a Hard one, can't change what's running.
+    - **Arriving in seconds:** while sync is on, the app's background core keeps one quiet connection (a WebSocket) to the server, which tells a group's devices when something new arrives, encrypted like the rest. Nothing polls, and it reconnects after sleep.
+    - **One session:** one id, one log record and one star, written by the computer that ends it. **End early** on any computer ends it everywhere, after asking whatever its strictness asks, and emergency passes are shared, since used passes are in the synced log. A computer that wakes mid-session joins it if it's still running.
+    - **Idle:** ending a session for being idle becomes off by default (§9). With it on, a session on several computers only ends once all of them have been idle that long (a sleeping or offline one counts as idle): the computer about to end it asks the others first, so nothing ticks in the background.
+    - **Following is a switch:** Settings › Sync on each computer has **Start sessions from my other computers here**, on when it joins. Off, that computer only syncs stats (e.g. a shared family computer). Nothing pops up when a session arrives; the menu bar and the Sky just show it, as if it had started here.
+    - Each computer still watches only its own browsers.
   - **The desktop app only, at first.** A linked extension's trips already reach the app; an extension used on its own doesn't sync.
   - **Who can start a group on a server:** a setting in the server's `.env`. `first group only`, the default: the first device starts its owner's group and then the server closes to new ones, so a personal server needs no invites. `invites`: an invite code per new group, for sharing a server with friends, or a hosted tier's signup. `open`: anyone. All three with per-group size caps and rate limits (and Cloudflare's rate-limit rules in front). A plain, non-secret `Seiza-Protocol: 1` header lets the server drop scanners before doing any work. A key built into the app wouldn't stop anyone, since the app is open source; the pairing code is what protects a group.
   - **Counting users, with no telemetry.** The server's `stats` command counts groups (about one per person), devices, and groups active in the last 7 and 30 days, from what it keeps anyway. A hosted tier would add a paying flag per group, to compare paying with active. The app sends nothing extra, people who stay offline aren't counted, and a self-hosted server only tells its owner. `PRIVACY.md` will say the server keeps when each device was last seen.
@@ -405,7 +412,9 @@ lock-in/
   4. **Settings › Sync:** Use your own server, Start a new sync group, Join with a pairing code, Add a device, the device list with Remove, Last synced, Leave sync and Move to another server, and joining with one sky.
   5. **Sending and fetching** at the moments above, with the Sky, streaks, today's time and the weekly report counting every device.
   6. **Before release:** `PRIVACY.md`'s Network section, the website's sync note (Phase 6, §9), and every new dependency at least two weeks old.
-  7. **Later:** satellites, then live session sync, then profiles; a hosted tier maybe, after the outside review.
+  7. **Profiles:** an `updated_at` on each profile, deleted ones kept as deleted, settings left per computer.
+  8. **Live sessions:** the server's quiet connection, one session across computers (ending, shared passes, idle, joining on wake), the copy of the rules a session carries, and the follow switch.
+  9. **Later:** satellites; a hosted tier maybe, after the outside review.
 
 ### Support the developer
 - A small, quiet "Support Seiza" link appears only on the website and at the very bottom of Settings. It goes to [Ko-fi](https://ko-fi.com/sortelone).
@@ -432,7 +441,7 @@ lock-in/
 **Phase 2: Desktop app (Tauri)** *(macOS and Linux; Windows support comes later: Native Messaging registry entries, idle time, and finding the browser behind a bridge)*
 - ✅ Menu-bar app, session engine, quiet timer + idle detection.
 - ✅ Strictness levels + emergency passes.
-- ✅ Native Messaging link + extension heartbeat: if the extension goes quiet during a session, warn → close that browser → count the session as broken, depending on strictness. The app and extension each work alone, so it only watches sessions whose profile tames sites, and closing is opt-in in Settings.
+- ✅ Native Messaging link + extension heartbeat: if the extension goes quiet during a session, warn → close that browser → count the session as broken, depending on strictness. The app and extension each work alone, so it only watches sessions whose profile tames sites, and closing is opt-in in Settings. (Planned: no more broken sessions, §9.)
 - ✅ App rules, SQLite. The session log keeps everything the rewards will need later (§5), so stardust and the sky can be worked out from past sessions once they ship. (On macOS, app launches come from `NSWorkspace` notifications; Linux has no unprivileged equivalent, so it checks every 10 seconds during sessions, about 9 ms each.)
 
 **Phase 3: Satellites & insights**
@@ -488,12 +497,16 @@ Built in slices, one PR each:
   - Left: checking each recipe on the real sites while logged in; screenshots and the promo tile; submitting to both stores.
   - Not paying for Apple or Windows code signing for now. Unsigned builds work after **Open Anyway** in macOS's Privacy & Security settings, which the release notes explain.
 
+**Next: two smaller session changes** (decided in the sync planning, November 2026; either can come before sync)
+- Ending a session for being idle is off by default for new installs, and stays in Settings for anyone who forgets to end sessions. Stepping away for a drink shouldn't end one.
+- No more broken sessions: the extension heartbeat still warns and, if turned on, closes the browser, but the session no longer counts as broken. Sessions already logged as broken stay as they are.
+
 **Phase 6: Website, community sky & sync**
 - Marketing website (§10) + community-worlds gallery, with the Why it works page (§12).
   - ✅ The website in `apps/website`, built from mock-up D (`prototypes/website`): the framed home page with the Lock in switch, the four levels, the redirect page, the sky, satellites, privacy and install; Why it works (§12) and Privacy pages; the quiet Ko-fi link in the footer; and a note that sync is planned, free to self-host or hosted for a small fee (§8). Static, served by a Cloudflare Worker deployed from GitHub. Still to do: the domain, store links once the extension is listed, and the community-worlds gallery.
   - Copy that's out of date after the sync and habit goals planning (§8, §12): the sync note (`SyncNote.vue`) still promises hosting "for a small fee", but sync is self-hosted first and a hosted tier only maybe later; and Why it works (`why-it-works.vue`) still calls habit goals parked, when they've been dropped as out of scope.
 - Constellation sharing endpoint.
-- Sync between devices (§8, Sync): self-hosted first, starting with the session log, trips and constellation names, in the build order there. Satellites, live sessions and profiles after; a hosted tier maybe later.
+- Sync between devices (§8, Sync): self-hosted first, starting with the session log, trips and constellation names, in the build order there. Profiles and live sessions straight after, then satellites; a hosted tier maybe later.
 
 **Later: the observing spot** (once the art style is chosen)
 - Your spot, the town on the horizon, decorations and companions, bought with stardust or found in rare events (§5).
