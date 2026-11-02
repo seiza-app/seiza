@@ -305,18 +305,17 @@ fn compress(json: &[u8]) -> Vec<u8> {
     encoder.finish().expect("writing to memory")
 }
 
-/// A batch's JSON. zlib's header never starts with `{`, so batches sent before they were
-/// compressed still open.
-fn decompress(packed: &[u8]) -> Option<Cow<'_, [u8]>> {
-    if packed.first() == Some(&b'{') {
-        return Some(Cow::Borrowed(packed));
-    }
+/// The first byte of what `compress` makes: zlib's header, for deflate with its usual window.
+const ZLIB: u8 = 0x78;
+
+/// A compressed batch's JSON, unless it's damaged or unpacks too big.
+fn decompress(packed: &[u8]) -> Option<Vec<u8>> {
     let mut json = Vec::new();
     ZlibDecoder::new(packed)
         .take(MAX_UNPACKED_BYTES + 1)
         .read_to_end(&mut json)
         .ok()?;
-    (json.len() as u64 <= MAX_UNPACKED_BYTES).then_some(Cow::Owned(json))
+    (json.len() as u64 <= MAX_UNPACKED_BYTES).then_some(json)
 }
 
 #[derive(Debug, PartialEq)]
@@ -329,14 +328,22 @@ enum Opened {
 /// What a batch from another computer holds. One that won't open (not sealed by this group's
 /// key, or changed on the way) holds nothing, as does a record this version doesn't know.
 fn open(key: &GroupKey, group_id: &str, sealed: &[u8]) -> Opened {
-    let Some(plain) = key
-        .open(Purpose::Batch, group_id, sealed)
-        .ok()
-        .and_then(|p| decompress(&p).map(Cow::into_owned))
-    else {
+    let Ok(plain) = key.open(Purpose::Batch, group_id, sealed) else {
         return Opened::Records(Vec::new());
     };
-    match serde_json::from_slice::<Incoming>(&plain) {
+    // The first byte says how it's packed: plain JSON (batches from before compression) or
+    // zlib. Anything else is a packing from a newer version, so it waits for an update rather
+    // than being skipped.
+    let json = match plain.first() {
+        None => return Opened::Records(Vec::new()),
+        Some(b'{') => Cow::Borrowed(&plain[..]),
+        Some(&ZLIB) => match decompress(&plain) {
+            Some(json) => Cow::Owned(json),
+            None => return Opened::Records(Vec::new()),
+        },
+        Some(_) => return Opened::Newer,
+    };
+    match serde_json::from_slice::<Incoming>(&json) {
         Ok(batch) if batch.v > VERSION => Opened::Newer,
         Ok(batch) => Opened::Records(
             batch
@@ -394,7 +401,10 @@ mod tests {
         );
         // A newer format waits for an update.
         assert_eq!(open(&key, "group", &sealed(r#"{"v":2,"stuff":[]}"#)), Opened::Newer);
-        assert_eq!(open(&key, "group", &sealed("not json")), Opened::Records(vec![]));
+        assert_eq!(open(&key, "group", &sealed("{not json")), Opened::Records(vec![]));
+        // So does a packing it doesn't know, and a damaged zlib one is skipped.
+        assert_eq!(open(&key, "group", &sealed("\u{1}new")), Opened::Newer);
+        assert_eq!(open(&key, "group", &sealed("x damaged")), Opened::Records(vec![]));
     }
 
     /// Text that hardly compresses.
@@ -416,6 +426,7 @@ mod tests {
         })
         .unwrap();
         let packed = batches(&records).unwrap();
+        assert_eq!(packed[0][0], ZLIB);
         assert!(packed[0].len() * 4 < json.len());
 
         let key = GroupKey::generate();
