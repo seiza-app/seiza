@@ -1,15 +1,20 @@
 // Sending this computer's changes to the sync server and fetching the others' (PLAN §8, Sync,
 // build step 5). There are no timers: a send goes out after something changes here (a session
 // ends, a goal is answered, a constellation or profile changes), and a fetch when the window
-// opens and when a session starts or ends. Changes go as records.rs's records, in batches sealed
-// by the group's key as `{"v": 1, "records": [...]}`.
+// opens and when a session starts or ends. Changes go as records.rs's records, in batches of
+// `{"v": 1, "records": [...]}` compressed with zlib and sealed by the group's key.
 //
 // One exchange runs at a time. Asking for one while it runs has it go again once it's done, and
 // each waits a moment first, so changes made together go out together.
 
+use std::borrow::Cow;
+use std::io::{Read, Write};
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
+use flate2::Compression;
+use flate2::read::ZlibDecoder;
+use flate2::write::ZlibEncoder;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
@@ -31,6 +36,8 @@ const PAGE: usize = 500;
 const MAX_BATCH_BYTES: usize = 1024 * 1024;
 /// What sealing adds: a version byte, the nonce and the tag (crypto.rs).
 const SEALING_BYTES: usize = 1 + 24 + 16;
+/// The most a batch can unpack to, so a bad one can't fill the memory.
+const MAX_UNPACKED_BYTES: u64 = 64 * 1024 * 1024;
 /// How long a send or fetch waits before going out, so changes made together go together.
 const SETTLE: Duration = Duration::from_secs(2);
 
@@ -277,9 +284,9 @@ fn batches(records: &[Record]) -> std::result::Result<Vec<Vec<u8>>, Error> {
     if records.is_empty() {
         return Ok(Vec::new());
     }
-    let json = serde_json::to_vec(&Outgoing { v: VERSION, records })?;
-    if json.len() + SEALING_BYTES <= MAX_BATCH_BYTES {
-        return Ok(vec![json]);
+    let packed = compress(&serde_json::to_vec(&Outgoing { v: VERSION, records })?);
+    if packed.len() + SEALING_BYTES <= MAX_BATCH_BYTES {
+        return Ok(vec![packed]);
     }
     if records.len() == 1 {
         eprintln!("Seiza: a record is too big to sync, so it stays on this computer");
@@ -289,6 +296,27 @@ fn batches(records: &[Record]) -> std::result::Result<Vec<Vec<u8>>, Error> {
     let mut halves = batches(first)?;
     halves.extend(batches(rest)?);
     Ok(halves)
+}
+
+/// JSON's field names repeat in every record, so compressing shrinks a batch several times over.
+fn compress(json: &[u8]) -> Vec<u8> {
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(json).expect("writing to memory");
+    encoder.finish().expect("writing to memory")
+}
+
+/// A batch's JSON. zlib's header never starts with `{`, so batches sent before they were
+/// compressed still open.
+fn decompress(packed: &[u8]) -> Option<Cow<'_, [u8]>> {
+    if packed.first() == Some(&b'{') {
+        return Some(Cow::Borrowed(packed));
+    }
+    let mut json = Vec::new();
+    ZlibDecoder::new(packed)
+        .take(MAX_UNPACKED_BYTES + 1)
+        .read_to_end(&mut json)
+        .ok()?;
+    (json.len() as u64 <= MAX_UNPACKED_BYTES).then_some(Cow::Owned(json))
 }
 
 #[derive(Debug, PartialEq)]
@@ -301,7 +329,11 @@ enum Opened {
 /// What a batch from another computer holds. One that won't open (not sealed by this group's
 /// key, or changed on the way) holds nothing, as does a record this version doesn't know.
 fn open(key: &GroupKey, group_id: &str, sealed: &[u8]) -> Opened {
-    let Ok(plain) = key.open(Purpose::Batch, group_id, sealed) else {
+    let Some(plain) = key
+        .open(Purpose::Batch, group_id, sealed)
+        .ok()
+        .and_then(|p| decompress(&p).map(Cow::into_owned))
+    else {
         return Opened::Records(Vec::new());
     };
     match serde_json::from_slice::<Incoming>(&plain) {
@@ -365,10 +397,35 @@ mod tests {
         assert_eq!(open(&key, "group", &sealed("not json")), Opened::Records(vec![]));
     }
 
+    /// Text that hardly compresses.
+    fn noise(len: usize) -> String {
+        let mut text = String::new();
+        while text.len() < len {
+            text.push_str(&uuid::Uuid::new_v4().simple().to_string());
+        }
+        text.truncate(len);
+        text
+    }
+
+    #[test]
+    fn batches_are_compressed_and_older_plain_ones_still_open() {
+        let records: Vec<_> = (0..200).map(|i| name(&i.to_string(), "Orion")).collect();
+        let json = serde_json::to_vec(&Outgoing {
+            v: VERSION,
+            records: &records,
+        })
+        .unwrap();
+        let packed = batches(&records).unwrap();
+        assert!(packed[0].len() * 4 < json.len());
+
+        let key = GroupKey::generate();
+        let plain = key.seal(Purpose::Batch, "group", &json);
+        assert_eq!(open(&key, "group", &plain), Opened::Records(records));
+    }
+
     #[test]
     fn big_changes_are_split_to_fit_the_server() {
-        let long = "x".repeat(300_000);
-        let records: Vec<_> = (0..7).map(|i| name(&i.to_string(), &long)).collect();
+        let records: Vec<_> = (0..7).map(|i| name(&i.to_string(), &noise(600_000))).collect();
         let batches = batches(&records).unwrap();
         assert!(batches.len() > 1);
         assert!(batches.iter().all(|b| b.len() + SEALING_BYTES <= MAX_BATCH_BYTES));
@@ -383,7 +440,7 @@ mod tests {
         assert_eq!(back, records);
         // One too big to send on its own stays here.
         assert!(
-            super::batches(&[name("big", &"x".repeat(MAX_BATCH_BYTES))])
+            super::batches(&[name("big", &noise(3 * MAX_BATCH_BYTES))])
                 .unwrap()
                 .is_empty()
         );

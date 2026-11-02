@@ -62,7 +62,14 @@ fn main() -> ExitCode {
 }
 
 fn serve(config: Config) -> Result<(), String> {
-    let runtime = tokio::runtime::Runtime::new().map_err(|error| error.to_string())?;
+    // One thread is plenty for a server a few people share. Database calls wait on one
+    // connection anyway, on tokio's blocking threads, which start only when needed and stop
+    // when idle.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .max_blocking_threads(4)
+        .build()
+        .map_err(|error| error.to_string())?;
     runtime.block_on(async move {
         let db = db::open(&config.db_path).map_err(|error| format!("couldn't open the database: {error}"))?;
         let addr = config.addr;
