@@ -24,8 +24,8 @@ Seiza 0.1.0 can't update itself, so if you have it, download this version and in
 
 The app works on its own, and with the extension it also tames, redirects and restricts sites in your browser:
 
-- Chrome, Brave, Edge and Arc: the Chrome Web Store
-- Firefox and Zen: Firefox Add-ons
+- Chrome, Brave, Edge and Arc: the [Chrome Web Store](https://chromewebstore.google.com/detail/seiza/nencjadggelocffidegejpekamaeopjc)
+- Firefox and Zen: [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/seiza-app/)
 
 Install both and they link up by themselves.
 

@@ -14,13 +14,13 @@
         <a class="btn primary" href="https://github.com/seiza-app/seiza/releases/latest">Download from GitHub</a>
       </div>
       <div class="hud glass reveal" style="--d: 300ms">
-        <span class="mono status">In review</span>
+        <span class="mono">Chrome · Firefox</span>
         <h3>The browser extension</h3>
-        <p>
-          For Chrome, Brave, Edge, Arc, Firefox and Zen. It's in review at the Chrome Web Store and Firefox Add-ons.
-          Until it's listed, you can build it from source.
-        </p>
-        <a class="btn ghost" href="https://github.com/seiza-app/seiza#getting-started">Build it from source</a>
+        <p>For Chrome, Brave, Edge and Arc from the Chrome Web Store, and Firefox and Zen from Firefox Add-ons.</p>
+        <div class="stores">
+          <a class="btn ghost" href="https://chromewebstore.google.com/detail/seiza/nencjadggelocffidegejpekamaeopjc">Chrome Web Store</a>
+          <a class="btn ghost" href="https://addons.mozilla.org/en-US/firefox/addon/seiza-app/">Firefox Add-ons</a>
+        </div>
       </div>
     </div>
     <p class="both reveal" style="--d: 380ms">
