@@ -33,6 +33,9 @@ pub struct Settings {
     /// the extension, through the hosts file (blocker.rs). macOS only for now. Turning it on
     /// installs a small helper, which asks for an administrator's password once.
     pub block_without_extension: bool,
+    /// Whether the app checks once a day for a new version (updates.rs). A check is one request
+    /// to GitHub; nothing else leaves the computer.
+    pub check_for_updates: bool,
 }
 
 pub const MAX_PASSES_PER_WEEK: u32 = 14;
@@ -49,6 +52,7 @@ impl Default for Settings {
             glow: DEFAULT_GLOW.into(),
             satellite_hotkey: hotkey::DEFAULT_HOTKEY.into(),
             block_without_extension: false,
+            check_for_updates: true,
         }
     }
 }
@@ -91,6 +95,7 @@ mod tests {
                 glow: DEFAULT_GLOW.into(),
                 satellite_hotkey: hotkey::DEFAULT_HOTKEY.into(),
                 block_without_extension: false,
+                check_for_updates: true,
             }
         );
     }

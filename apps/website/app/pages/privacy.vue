@@ -87,11 +87,21 @@ usePageSeo({
 
     <section id="network" data-name="Network">
       <p class="kicker mono reveal"><b>05</b> · Network</p>
-      <h2 class="reveal" style="--d: 80ms">No requests at all</h2>
+      <h2 class="reveal" style="--d: 80ms">One request a day, to GitHub</h2>
       <p class="lede reveal" style="--d: 160ms">
-        Neither the app nor the extension makes network requests. The quotes are bundled with the app. Links you add
-        yourself, like the support link or your own links on the redirect page, open in your browser like any other
-        link.
+        The extension makes no network requests. The app makes one: unless you turn it off in Settings › Updates, it
+        asks GitHub once a day whether there's a new version of Seiza, by downloading a small file from the project's
+        releases.
+      </p>
+      <p class="reveal" style="--d: 190ms">
+        The request carries nothing about you or what you do in Seiza, though like any web request it shows GitHub your
+        IP address (<a href="https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement"
+          >GitHub's privacy statement</a
+        >
+        covers what GitHub keeps). If you update, the new version downloads from GitHub too, and the app checks its
+        signature before installing it. Seiza 0.1.0 doesn't check for updates. The quotes are bundled with the app.
+        Links you add yourself, like the support link or your own links on the redirect page, open in your browser like
+        any other link.
       </p>
       <SyncNote class="reveal" style="--d: 220ms" />
     </section>
@@ -104,7 +114,7 @@ usePageSeo({
         <a href="https://github.com/seiza-app/seiza">github.com/seiza-app/seiza</a>, so you can check any of it.
         Questions go to the repository's <a href="https://github.com/seiza-app/seiza/issues">issues</a>.
       </p>
-      <p class="aside mono reveal" style="--d: 220ms">Last updated: 30 October 2026</p>
+      <p class="aside mono reveal" style="--d: 220ms">Last updated: 2 November 2026</p>
       <SiteFooter class="reveal" style="--d: 280ms" />
     </section>
   </div>

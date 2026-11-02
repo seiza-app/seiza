@@ -34,6 +34,11 @@ satellites: Array<Satellite>,
  */
 tourOffered: boolean, 
 /**
+ * The newest version of the app the Sky has offered. The Sky offers each new version once;
+ * after that it's in Settings until it's installed.
+ */
+updateOffered: string | null, 
+/**
  * Quotes the user added, for the Sky's quote for the day and Settings.
  */
 ownQuotes: Array<OwnQuote>, 

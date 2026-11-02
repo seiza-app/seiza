@@ -23,6 +23,7 @@ mod sites;
 mod store;
 mod timer;
 mod tray;
+mod updates;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -519,6 +520,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(capture::plugin())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             // Seiza lives in the menu bar, with no Dock icon until its window opens.
             #[cfg(target_os = "macos")]
@@ -542,6 +544,7 @@ pub fn run() {
             app.manage(link::Links::default());
             app.manage(capture::CameFrom::default());
             app.manage(capture::Paused::default());
+            app.manage(updates::Updates::default());
 
             tray::create(app.handle(), &snapshot)?;
             capture::listen(app.handle());
@@ -554,6 +557,7 @@ pub fn run() {
             schedule_timer(app.handle(), session, snapshot.session.map(|s| s.profile_name));
             sync_blocker(app.handle());
             tauri::async_runtime::spawn(link::serve(app.handle().clone()));
+            updates::watch(app.handle());
             match std::env::current_exe() {
                 Ok(executable) => {
                     for result in hosts::install(&executable) {
@@ -622,6 +626,10 @@ pub fn run() {
             commands::sky_state,
             commands::sky_seen,
             commands::tour_offered,
+            commands::update_status,
+            commands::check_for_updates,
+            commands::install_update,
+            commands::update_offered,
             commands::export_backup,
             commands::show_backup,
             commands::import_backup,

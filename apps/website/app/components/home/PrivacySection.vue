@@ -15,8 +15,11 @@
         <p>The extension and the app talk over your browser's Native Messaging, which never leaves your computer.</p>
       </li>
       <li class="hud glass reveal" style="--d: 340ms">
-        <strong>No network at all</strong>
-        <p>Neither makes network requests. The source code is public, so you can check any of it.</p>
+        <strong>One update check a day</strong>
+        <p>
+          The app asks GitHub once a day if there's a new version, which you can turn off. The extension makes no
+          requests. The source code is public, so you can check any of it.
+        </p>
       </li>
     </ul>
     <SyncNote class="reveal" style="--d: 400ms" />

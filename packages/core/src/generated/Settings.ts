@@ -41,4 +41,9 @@ satelliteHotkey: string,
  * the extension, through the hosts file (blocker.rs). macOS only for now. Turning it on
  * installs a small helper, which asks for an administrator's password once.
  */
-blockWithoutExtension: boolean, };
+blockWithoutExtension: boolean, 
+/**
+ * Whether the app checks once a day for a new version (updates.rs). A check is one request
+ * to GitHub; nothing else leaves the computer.
+ */
+checkForUpdates: boolean, };

@@ -23,6 +23,10 @@ pub enum Error {
     Blocker(String),
     /// A backup couldn't be saved or brought in.
     Backup(String),
+    /// Checking for, downloading or installing a new version went wrong.
+    Update(tauri_plugin_updater::Error),
+    /// There's no new version to install, or no check has found one yet.
+    NoUpdate,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -50,6 +54,8 @@ impl fmt::Display for Error {
             ),
             Error::Hotkey(problem) => write!(f, "{problem}"),
             Error::Blocker(problem) | Error::Backup(problem) => f.write_str(problem),
+            Error::Update(error) => write!(f, "{error}"),
+            Error::NoUpdate => f.write_str("there's no new version to install"),
         }
     }
 }
@@ -78,6 +84,12 @@ impl From<std::io::Error> for Error {
 impl From<crate::hotkey::Problem> for Error {
     fn from(problem: crate::hotkey::Problem) -> Self {
         Error::Hotkey(problem)
+    }
+}
+
+impl From<tauri_plugin_updater::Error> for Error {
+    fn from(error: tauri_plugin_updater::Error) -> Self {
+        Error::Update(error)
     }
 }
 

@@ -23,6 +23,7 @@ const BROWSERS: &str = "browsers";
 const BROKEN_SESSION: &str = "brokenSession";
 const SKY: &str = "sky";
 const TOUR: &str = "tour";
+const UPDATE_OFFERED: &str = "updateOffered";
 const OWN_QUOTES: &str = "ownQuotes";
 const SESSION_GOAL: &str = "sessionGoal";
 const SITE_SETTINGS: &str = "siteSettings";
@@ -48,6 +49,8 @@ pub struct Engine {
     satellites: Vec<Satellite>,
     /// Whether the tour for new users has been offered (taken or turned down).
     tour_offered: bool,
+    /// The newest version of the app the Sky has offered (updates.rs).
+    update_offered: Option<String>,
     /// Quotes the user added, synced with the extension.
     own_quotes: Synced<Vec<OwnQuote>>,
     /// The running session's goal, or the last one's until "Did you do it?" is answered.
@@ -77,6 +80,9 @@ pub struct Snapshot {
     /// Whether the tour for new users has been offered. Until it has, the Sky offers it once;
     /// after that it's only in Settings.
     pub tour_offered: bool,
+    /// The newest version of the app the Sky has offered. The Sky offers each new version once;
+    /// after that it's in Settings until it's installed.
+    pub update_offered: Option<String>,
     /// Quotes the user added, for the Sky's quote for the day and Settings.
     pub own_quotes: Vec<OwnQuote>,
     /// The last session's goal, between sessions, until "Did you do it?" is answered.
@@ -178,6 +184,7 @@ impl Engine {
         let broken_session = store.load(BROKEN_SESSION)?.and_then(|s| s.value);
         let satellites = store.shown_satellites(now - DONE_TASKS_SHOWN_MS)?;
         let tour_offered = store.load::<bool>(TOUR)?.is_some_and(|s| s.value);
+        let update_offered = store.load::<String>(UPDATE_OFFERED)?.map(|s| s.value);
         // Like the starter profiles, none at first counts as never changed, so quotes the
         // extension already has win when it first connects.
         let own_quotes = store.load(OWN_QUOTES)?.unwrap_or(Synced {
@@ -200,6 +207,7 @@ impl Engine {
             broken_session,
             satellites,
             tour_offered,
+            update_offered,
             own_quotes,
             goal,
             site_settings,
@@ -283,6 +291,7 @@ impl Engine {
                 .cloned()
                 .collect(),
             tour_offered: self.tour_offered,
+            update_offered: self.update_offered.clone(),
             own_quotes: self.own_quotes.value.clone(),
             goal_to_answer: self.goal.clone().filter(|_| self.session().is_none()),
         }
@@ -880,6 +889,19 @@ impl Engine {
             },
         )?;
         self.tour_offered = true;
+        Ok(())
+    }
+
+    /// Notes that the Sky has offered this version of the app, so it doesn't offer it again.
+    pub fn update_offered(&mut self, version: &str, now: i64) -> Result<()> {
+        self.store.save(
+            UPDATE_OFFERED,
+            &Synced {
+                value: version,
+                updated_at: now,
+            },
+        )?;
+        self.update_offered = Some(version.into());
         Ok(())
     }
 
@@ -2104,6 +2126,20 @@ mod tests {
 
         let store = std::mem::replace(&mut engine.store, Store::open_in_memory().unwrap());
         assert!(Engine::load(store, MIN).unwrap().snapshot(MIN).tour_offered);
+    }
+
+    #[test]
+    fn offers_each_new_version_once() {
+        let mut engine = engine();
+        assert_eq!(engine.snapshot(0).update_offered, None);
+        engine.update_offered("0.2.0", MIN).unwrap();
+        assert_eq!(engine.snapshot(MIN).update_offered.as_deref(), Some("0.2.0"));
+
+        let store = std::mem::replace(&mut engine.store, Store::open_in_memory().unwrap());
+        let mut engine = Engine::load(store, MIN).unwrap();
+        assert_eq!(engine.snapshot(MIN).update_offered.as_deref(), Some("0.2.0"));
+        engine.update_offered("0.3.0", 2 * MIN).unwrap();
+        assert_eq!(engine.snapshot(2 * MIN).update_offered.as_deref(), Some("0.3.0"));
     }
 
     #[test]

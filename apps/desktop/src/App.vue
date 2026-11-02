@@ -36,6 +36,7 @@ import {
   weekMonth,
   weekStart,
 } from '@lock-in/core';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue';
 import {
   actOnSatellite,
@@ -47,11 +48,14 @@ import {
   endSession,
   firstDayOfWeek,
   forgetBrowser,
+  installUpdate,
   launchSatellite,
   mac,
   markTourOffered,
+  markUpdateOffered,
   nameConstellation,
   removeOwnQuote,
+  releasePage,
   removeSampleData,
   sessionLog,
   setProfileApps,
@@ -68,6 +72,7 @@ import {
   turnedBack,
   useNow,
   useSnapshot,
+  useUpdates,
 } from './app';
 import { quotes } from '@lock-in/quotes';
 import NightSky, {
@@ -431,6 +436,25 @@ function takeTour(take = true) {
 }
 const act = (id: string, action: SatelliteAction) => run(() => actOnSatellite(id, action));
 
+// New versions (PLAN §8, Updates): the Sky offers each one once, after the tour's offer, and
+// Settings keeps it until it's installed, with a dot on its tab.
+const updates = useUpdates();
+const newVersion = computed(() => updates.value?.available ?? undefined);
+const updateOffer = computed(() => {
+  const version = newVersion.value;
+  if (!version || !updates.value || !snapshot.value?.tourOffered || snapshot.value.updateOffered === version) {
+    return undefined;
+  }
+  return { version, installing: updates.value.installing, canInstall: updates.value.canInstall };
+});
+function answerUpdate(action: 'install' | 'later' | 'notes') {
+  const version = newVersion.value;
+  if (!version) return;
+  if (action === 'notes') void openUrl(releasePage(version));
+  else if (action === 'later') void run(() => markUpdateOffered(version));
+  else void run(installUpdate);
+}
+
 async function run(action: () => Promise<void>) {
   error.value = '';
   try {
@@ -477,13 +501,14 @@ async function run(action: () => Promise<void>) {
           v-for="tab in tabs"
           :key="tab.view"
           class="tab mono"
+          :class="{ news: tab.view === 'settings' && newVersion }"
           type="button"
           :aria-current="view === tab.view ? 'page' : undefined"
           :disabled="tab.view === 'week' && !!snapshot?.session"
           :title="tab.view === 'week' && snapshot?.session ? 'Your week opens again when this session ends' : undefined"
           @click="view = tab.view"
         >
-          {{ tab.label }}
+          {{ tab.label }}<span v-if="tab.view === 'settings' && newVersion" class="hidden">, new version</span>
         </button>
       </nav>
     </header>
@@ -500,6 +525,7 @@ async function run(action: () => Promise<void>) {
           :satellites="satellites"
           :satellite-hotkey="snapshot.settings.satelliteHotkey"
           :offer-tour="!snapshot.tourOffered && touring === undefined"
+          :offer-update="updateOffer"
           :star-count="starCount"
           :glance="glance"
           :stardust="totalStardust"
@@ -521,6 +547,7 @@ async function run(action: () => Promise<void>) {
           @recenter="nightSky?.recenter()"
           @rename="rename"
           @tour="takeTour"
+          @update="answerUpdate"
         />
         <ProfileList
           v-else-if="view === 'profiles'"
@@ -554,6 +581,7 @@ async function run(action: () => Promise<void>) {
           :session-running="!!snapshot.session"
           :lifetime-focus-ms="lifetimeFocus"
           :own-quotes="snapshot.ownQuotes"
+          :updates="updates"
           @add-quote="(text: string, author: string) => run(() => addOwnQuote(text, author))"
           @remove-quote="(id: string) => run(() => removeOwnQuote(id))"
           @update:settings="(settings: Settings) => run(() => setSettings(settings))"
@@ -628,6 +656,28 @@ h1 {
 .tab:hover,
 .tab[aria-current='page'] {
   color: var(--starlight);
+}
+
+/* A new version is out: a small dot after Settings, until it's installed. */
+.tab.news::after {
+  content: '';
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  margin-left: 5px;
+  vertical-align: 0.45em;
+  border-radius: 50%;
+  background: var(--glow);
+  box-shadow: 0 0 5px var(--glow);
+}
+
+.hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .tab:disabled {
