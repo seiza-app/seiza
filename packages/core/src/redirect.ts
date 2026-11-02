@@ -1,6 +1,7 @@
 import { findRule } from './edits';
 import { matchPatternToRegex, parseHttpUrl } from './match';
 import { levelFor, pathRegexSource } from './paths';
+import { sessionProfile } from './profiles';
 import { findRecipe } from './recipe';
 import { redirectSettingsFor } from './settings';
 import type { GateVisit, PassExpiry, Profile, Session, SiteLevel, SiteRecipe, WhyReason } from './types';
@@ -32,16 +33,7 @@ export function siteAccess(options: {
 }): Access {
   const { session, profiles, recipeId, path, now } = options;
   if (!session) return 'open';
-  return accessFor(
-    levelFor(
-      profiles.find((p) => p.id === session.profileId),
-      recipeId,
-      path,
-    ),
-    session,
-    recipeId,
-    now,
-  );
+  return accessFor(levelFor(sessionProfile(profiles, session), recipeId, path), session, recipeId, now);
 }
 
 function accessFor(level: SiteLevel, session: Session, recipeId: string, now: number): Access {
@@ -71,7 +63,7 @@ export function redirectRules(options: {
   now: number;
 }): RedirectRule[] {
   const { session, profiles, recipes, now } = options;
-  const profile = profiles.find((p) => p.id === session?.profileId);
+  const profile = sessionProfile(profiles, session);
   if (!session || !profile) return [];
 
   return recipes.flatMap((recipe) => {
@@ -174,7 +166,7 @@ export function checkOpenPage(options: {
   now: number;
 }): OpenPageCheck {
   const { url, session, profiles, recipes, now } = options;
-  const profile = profiles.find((p) => p.id === session?.profileId);
+  const profile = sessionProfile(profiles, session);
   const recipe = findRecipe(recipes, url);
   const level = recipe ? levelFor(profile, recipe.id, parseHttpUrl(String(url))?.pathname) : 'allowed';
   if (!session || !profile || !recipe || (level !== 'redirected' && level !== 'restricted')) return { action: 'none' };

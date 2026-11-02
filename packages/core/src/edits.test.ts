@@ -10,11 +10,13 @@ import {
   withProfileRenamed,
   withProfileToggle,
   withRedirectSettings,
+  withRulesEdited,
   withSessionOverridesSaved,
   withSessionToggle,
   withSiteLevel,
   withStarterProfilesReset,
 } from './edits';
+import { sessionProfile } from './profiles';
 import { defaultRedirectSettings } from './settings';
 import type { Profile, Session, SiteRecipe } from './types';
 
@@ -90,6 +92,12 @@ describe('withSessionOverridesSaved', () => {
   it('removes the overrides field once nothing is left', () => {
     const changed: Session = { ...session, overrides: { example: { hideFeed: false } } };
     expect(withSessionOverridesSaved(profiles, changed, 'example').session).toEqual(session);
+  });
+
+  it("saves them into the session's own copy of its profile too", () => {
+    const changed: Session = { ...session, rules: profiles[0], overrides: { example: { hideFeed: false } } };
+    const result = withSessionOverridesSaved(profiles, changed, 'example');
+    expect(result.session.rules).toEqual(result.profiles[0]);
   });
 
   it('does nothing when the profile has no rule for the site', () => {
@@ -215,5 +223,31 @@ describe('page rules', () => {
     expect(paths(withSiteLevel(added, 'focus', 'example', 'allowed'))).toEqual([
       { path: '/shorts', level: 'redirected' },
     ]);
+  });
+});
+
+describe("the running session's rules", () => {
+  const running: Session = { ...session, rules: profiles[0] };
+
+  it("come from the session's copy, or its profile when it has none", () => {
+    const renamed = withProfileRenamed(profiles, 'focus', 'Renamed elsewhere');
+    expect(sessionProfile(renamed, running)?.name).toBe('Focus');
+    expect(sessionProfile(renamed, session)?.name).toBe('Renamed elsewhere');
+    expect(sessionProfile(profiles, null)).toBeUndefined();
+  });
+
+  it('take edits to their profile, and only to it', () => {
+    expect(withRulesEdited(running, (list) => withProfileRenamed(list, 'focus', 'Essays'), 0).rules?.name).toBe(
+      'Essays',
+    );
+    expect(withRulesEdited(running, (list) => withProfileRenamed(list, 'other', 'Essays'), 0)).toBe(running);
+    expect(withRulesEdited(session, (list) => withProfileRenamed(list, 'focus', 'Essays'), 0)).toBe(session);
+  });
+
+  it("don't loosen while the session is Hard", () => {
+    const hard: Session = { ...running, timer: { minutes: 50, strictness: 'hard' } as Session['timer'] };
+    const allow = (list: Profile[]) => withSiteLevel(list, 'focus', 'example', 'allowed');
+    expect(withRulesEdited(hard, allow, 60_000)).toBe(hard);
+    expect(withRulesEdited(running, allow, 60_000).rules).toEqual(allow([profiles[0]!])[0]);
   });
 });

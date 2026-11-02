@@ -4,6 +4,7 @@ import {
   findRecipe,
   parseHttpUrl,
   redirectSettingsFor,
+  sessionProfile,
   siteAccess,
   siteRecipes,
   waitSecondsFor,
@@ -54,7 +55,7 @@ onMounted(async () => {
   recipe.value = site;
   looked.value = true;
   if (!site) return;
-  const profile = profileList.find((p) => p.id === session?.profileId);
+  const profile = sessionProfile(profileList, session);
   const access = siteAccess({
     session,
     profiles: profileList,

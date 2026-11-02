@@ -140,9 +140,7 @@ pub(crate) fn sync_blocker(app: &AppHandle) {
     let (on, wanted) = {
         let engine = engine(app);
         let on = engine.settings().block_without_extension;
-        let profile = engine
-            .session()
-            .and_then(|s| engine.synced().0.value.iter().find(|p| p.id == s.profile_id));
+        let profile = engine.session().and_then(|s| engine.rules_of(s));
         let domains = profile
             .filter(|_| on)
             .map(blocker::restricted_domains)
@@ -243,7 +241,7 @@ fn watch_session(app: &AppHandle, session_id: Option<String>) {
                 let Some(session) = engine.session().filter(|s| s.id == id) else {
                     return;
                 };
-                let browser_paths: Vec<PathBuf> = if engine.profile_tames_sites(&session.profile_id) {
+                let browser_paths: Vec<PathBuf> = if engine.session_tames_sites(session) {
                     engine.browsers().iter().map(|b| b.path.clone().into()).collect()
                 } else {
                     Vec::new()
@@ -252,7 +250,7 @@ fn watch_session(app: &AppHandle, session_id: Option<String>) {
                 (
                     browser_paths,
                     Response::to(session.lock(now), close),
-                    engine.profile_apps(&session.profile_id),
+                    engine.session_apps(session),
                     engine.profile_name(&session.profile_id),
                 )
             };

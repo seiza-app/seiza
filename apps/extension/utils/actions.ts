@@ -39,6 +39,9 @@ import {
   type SiteLevel,
   type SiteRecipe,
   type WhyReason,
+  sessionProfile,
+  withRulesEdited,
+  type Session,
 } from '@lock-in/core';
 
 // Every change to sessions and profiles goes through these actions. Today they save to
@@ -54,8 +57,20 @@ function inTurn<T>(edit: () => Promise<T>): Promise<T> {
   return next;
 }
 
+/** Saves an edit to the profiles, and to the running session's copy of its own (`withRulesEdited`). */
+async function saveEdit(edit: (list: Profile[]) => Profile[], list: Profile[], session: Session | null) {
+  const edited = session && withRulesEdited(session, edit, Date.now());
+  await storage.setItems([
+    { item: profiles, value: edit(list) },
+    ...(edited && edited !== session ? [{ item: activeSession, value: edited }] : []),
+  ]);
+}
+
 function editProfiles(edit: (list: Profile[]) => Profile[]): Promise<void> {
-  return inTurn(async () => profiles.setValue(edit(await profiles.getValue())));
+  return inTurn(async () => {
+    const [session, list] = await Promise.all([activeSession.getValue(), profiles.getValue()]);
+    await saveEdit(edit, list, session);
+  });
 }
 
 /**
@@ -65,17 +80,21 @@ function editProfiles(edit: (list: Profile[]) => Profile[]): Promise<void> {
 function editSites(profileId: string, edit: (list: Profile[]) => Profile[]): Promise<boolean> {
   return inTurn(async () => {
     const [session, list] = await Promise.all([activeSession.getValue(), profiles.getValue()]);
-    const edited = edit(list);
     const sitesOf = (from: Profile[]) => from.find((p) => p.id === profileId)?.sites ?? [];
     const hard = session?.profileId === profileId && endLock(session, Date.now()) === 'hard';
-    if (hard && sitesLooser(sitesOf(list), sitesOf(edited))) return false;
-    await profiles.setValue(edited);
+    // The session's own copy too, which a change synced to the desktop app may have left stricter.
+    const running = session?.rules ? [session.rules] : [];
+    if (hard && [list, running].some((from) => sitesLooser(sitesOf(from), sitesOf(edit(from))))) return false;
+    await saveEdit(edit, list, session);
     return true;
   });
 }
 
 export async function startSession(profileId: string): Promise<void> {
-  await inTurn(() => activeSession.setValue({ id: crypto.randomUUID(), profileId, startedAt: Date.now() }));
+  await inTurn(async () => {
+    const rules = (await profiles.getValue()).find((p) => p.id === profileId);
+    await activeSession.setValue({ id: crypto.randomUUID(), profileId, startedAt: Date.now(), rules });
+  });
 }
 
 /**
@@ -95,10 +114,7 @@ export function setSessionToggle(recipe: SiteRecipe, toggleId: string, value: bo
     const [session, profileList] = await Promise.all([activeSession.getValue(), profiles.getValue()]);
     if (!session) return;
 
-    const rule = findRule(
-      profileList.find((p) => p.id === session.profileId),
-      recipe.id,
-    );
+    const rule = findRule(sessionProfile(profileList, session), recipe.id);
     await activeSession.setValue(withSessionToggle(session, recipe, rule, toggleId, value));
   });
 }
@@ -281,7 +297,7 @@ export async function continueToSite(visitId: string, recipeId: string, intentio
     ]);
     if (!session) return false;
 
-    const { passMinutes } = redirectSettingsFor(profileList.find((p) => p.id === session.profileId)).gate;
+    const { passMinutes } = redirectSettingsFor(sessionProfile(profileList, session)).gate;
     // Going on to the site ends its wait, so the next trip after the pass waits again.
     const { [recipeId]: _ended, ...waits } = await pageWaits.getValue();
     await storage.setItems([

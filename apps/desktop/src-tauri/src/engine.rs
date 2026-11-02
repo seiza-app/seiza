@@ -244,14 +244,20 @@ impl Engine {
         &self.settings
     }
 
-    /// The apps the profile with this id closes or hides during its sessions.
-    pub fn profile_apps(&self, id: &str) -> Vec<AppRule> {
-        self.profile(id).map(Profile::apps).unwrap_or_default()
+    /// The rules a session runs by: its own copy of its profile, or, for one from before
+    /// sessions had a copy, the profile itself.
+    pub fn rules_of<'a>(&'a self, session: &'a Session) -> Option<&'a Profile> {
+        session.rules.as_ref().or_else(|| self.profile(&session.profile_id))
     }
 
-    /// Whether the profile with this id tames any sites, so its sessions need the extension.
-    pub fn profile_tames_sites(&self, id: &str) -> bool {
-        self.profile(id).is_some_and(Profile::tames_sites)
+    /// The apps a session closes or hides.
+    pub fn session_apps(&self, session: &Session) -> Vec<AppRule> {
+        self.rules_of(session).map(Profile::apps).unwrap_or_default()
+    }
+
+    /// Whether a session tames any sites, so it needs the extension.
+    pub fn session_tames_sites(&self, session: &Session) -> bool {
+        self.rules_of(session).is_some_and(Profile::tames_sites)
     }
 
     pub fn browsers(&self) -> &[KnownBrowser] {
@@ -336,6 +342,7 @@ impl Engine {
             profile_id: profile.id.clone(),
             started_at: now,
             timer: Some(profile.timer()),
+            rules: Some(profile.clone()),
             rest: Default::default(),
         };
         let synced = Synced {
@@ -465,7 +472,46 @@ impl Engine {
 
     /// Saves a new version of the list of profiles made here, and notes what changed for sync.
     fn save_profiles(&mut self, profiles: Synced<Vec<Profile>>, now: i64) -> Result<()> {
-        self.replace_profiles(profiles, Some(now))
+        let before = self.running_profile().cloned();
+        self.replace_profiles(profiles, Some(now))?;
+        self.carry_to_session(before, now)
+    }
+
+    /// The profile the running session started from, as it is in the list now.
+    fn running_profile(&self) -> Option<&Profile> {
+        self.session().and_then(|s| self.profile(&s.profile_id))
+    }
+
+    /// Brings a change made here to the running session's profile, from `before`, into the
+    /// session's copy of it. It goes field by field, so a change synced from another computer
+    /// in between stays out, and while the session is Hard its sites and apps only get stricter.
+    fn carry_to_session(&mut self, before: Option<Profile>, now: i64) -> Result<()> {
+        let (Some(before), Some(after)) = (before, self.running_profile()) else {
+            return Ok(());
+        };
+        let session = self.session().expect("a profile is running");
+        let Some(rules) = session
+            .rules
+            .as_ref()
+            .filter(|_| before.id == after.id && &before != after)
+        else {
+            return Ok(());
+        };
+        let mut copy = rules.clone();
+        carry_edit(&mut copy, &before, after, session.lock(now) == Some(Strictness::Hard));
+        if &copy == rules {
+            return Ok(());
+        }
+        let mut session = session.clone();
+        session.rules = Some(copy);
+        let synced = Synced {
+            value: Some(session),
+            // Newer than any copy the extension has, so it takes this one.
+            updated_at: now.max(self.session.updated_at + 1),
+        };
+        self.store.save(ACTIVE_SESSION, &synced)?;
+        self.session = synced;
+        Ok(())
     }
 
     /// Saves a new version of the list of profiles, with when each one changed in it. Changes
@@ -505,7 +551,8 @@ impl Engine {
             .ok_or(Error::UnknownProfile)?;
         let running = self.session().filter(|s| s.profile_id == profile_id);
         let hard = running.and_then(|s| s.lock(now)) == Some(Strictness::Hard);
-        if hard && apps::looser(&profile.apps(), &apps) {
+        let in_use = running.and_then(|s| s.rules.as_ref()).unwrap_or(profile);
+        if hard && (apps::looser(&profile.apps(), &apps) || apps::looser(&in_use.apps(), &apps)) {
             return Err(Error::Locked);
         }
         profile.set_apps(&apps);
@@ -529,7 +576,8 @@ impl Engine {
             .ok_or(Error::UnknownProfile)?;
         let running = self.session().filter(|s| s.profile_id == profile_id);
         let hard = running.and_then(|s| s.lock(now)) == Some(Strictness::Hard);
-        if hard && sites::looser(&profile.sites(), &sites) {
+        let in_use = running.and_then(|s| s.rules.as_ref()).unwrap_or(profile);
+        if hard && (sites::looser(&profile.sites(), &sites) || sites::looser(&in_use.sites(), &sites)) {
             return Err(Error::Locked);
         }
         profile.set_sites(&sites);
@@ -721,6 +769,7 @@ impl Engine {
         now: i64,
     ) -> Result<bool> {
         let mut changed = false;
+        let running_before = self.running_profile().cloned();
 
         // Nothing can come from the future; a clock that ran ahead mustn't freeze the app's state.
         if let Some(mut incoming) = profiles.filter(|p| p.updated_at.min(now) > self.profiles.updated_at) {
@@ -734,7 +783,9 @@ impl Engine {
                     incoming.updated_at += 1;
                 }
             }
-            self.save_profiles(incoming, now)?;
+            // Carried into the running session's rules below, once the extension's copy of the
+            // session is in, so that copy doesn't look older than the change.
+            self.replace_profiles(incoming, Some(now))?;
             changed = true;
         }
 
@@ -758,9 +809,15 @@ impl Engine {
                         .clone()
                         .or_else(|| Some(self.profile(&new.profile_id).map(Profile::timer).unwrap_or_default())),
                 };
-                if new.timer != timer {
+                // An extension from before sessions had their own rules leaves them out.
+                let rules = match &current {
+                    Some(c) if same && new.rules.is_none() => c.rules.clone(),
+                    _ => new.rules.clone().or_else(|| self.profile(&new.profile_id).cloned()),
+                };
+                if new.timer != timer || new.rules != rules {
                     new.timer = timer;
-                    // Newer than the extension's copy, so it takes the timer when this is sent back.
+                    new.rules = rules;
+                    // Newer than the extension's copy, so it takes these when this is sent back.
                     incoming.updated_at += 1;
                 }
             }
@@ -788,6 +845,9 @@ impl Engine {
             changed = true;
         }
 
+        if changed {
+            self.carry_to_session(running_before, now)?;
+        }
         Ok(changed)
     }
 
@@ -1348,6 +1408,34 @@ fn restamp(stamps: &mut BTreeMap<String, i64>, before: &[Profile], after: &[Prof
 /// list the extension last took: what it changed since then wins, but a profile that changed
 /// here after that (from sync, say) stays as it is here, since the extension's list was made
 /// without it. So a profile that arrived as the extension saved its list isn't dropped.
+/// Makes the changes from `before` to `after` in `copy`, one top-level field at a time. With
+/// `hard`, changes that would loosen its sites or apps are left out.
+fn carry_edit(copy: &mut Profile, before: &Profile, after: &Profile, hard: bool) {
+    if before.name != after.name {
+        copy.name = after.name.clone();
+    }
+    let fields: std::collections::BTreeSet<&String> = before.rest.keys().chain(after.rest.keys()).collect();
+    for field in fields {
+        let new = after.rest.get(field);
+        if before.rest.get(field) == new {
+            continue;
+        }
+        let loosens = hard
+            && match field.as_str() {
+                "sites" => sites::looser(&copy.sites(), &after.sites()),
+                "apps" => apps::looser(&copy.apps(), &after.apps()),
+                _ => false,
+            };
+        if loosens {
+            continue;
+        }
+        match new {
+            Some(value) => copy.rest.insert(field.clone(), value.clone()),
+            None => copy.rest.remove(field),
+        };
+    }
+}
+
 fn merge_from_extension(
     here: &[Profile],
     stamps: &BTreeMap<String, i64>,
@@ -1898,6 +1986,7 @@ mod tests {
             profile_id: profile_id.into(),
             started_at: 1_000,
             timer,
+            rules: None,
             rest: serde_json::from_value(serde_json::json!({ "passes": { "reddit": 5 } })).unwrap(),
         }
     }
@@ -2124,6 +2213,94 @@ mod tests {
         };
         engine.set_profile_timer("deep-work", timer, 1).unwrap();
         engine
+    }
+
+    #[test]
+    fn a_running_session_keeps_its_rules_when_another_computer_changes_its_profile() {
+        let mut engine = engine();
+        engine.start_session("deep-work", MIN).unwrap();
+        let rules = engine.session().unwrap().rules.clone().unwrap();
+        assert_eq!(Some(&rules), engine.profile("deep-work"));
+
+        // Synced from another computer: Deep Work with no sites at all.
+        engine
+            .apply_records(&[profile_record("deep-work", "Deep Work", false, 2 * MIN)], 3 * MIN)
+            .unwrap();
+        assert!(engine.profile("deep-work").unwrap().sites().is_empty());
+        assert_eq!(engine.session().unwrap().rules.as_ref(), Some(&rules));
+        assert!(engine.session_tames_sites(engine.session().unwrap()));
+
+        // A change made here afterwards reaches it, without bringing the synced one along.
+        engine
+            .set_profile_plan("deep-work", "When I want Reddit, I'll stretch.", 4 * MIN)
+            .unwrap();
+        let running = engine.session().unwrap().rules.as_ref().unwrap();
+        assert_eq!(running.sites(), rules.sites());
+        assert_eq!(
+            running.rest.get("redirect"),
+            engine.profile("deep-work").unwrap().rest.get("redirect")
+        );
+    }
+
+    #[test]
+    fn the_extension_changes_the_running_sessions_rules_but_cant_loosen_a_hard_one() {
+        let mut engine = hard_engine();
+        engine.start_session("deep-work", MIN).unwrap();
+        let with_sites = |engine: &Engine, sites: serde_json::Value, at: i64| {
+            let mut list = engine.profiles.value.clone();
+            let profile = list.iter_mut().find(|p| p.id == "deep-work").unwrap();
+            profile.rest.insert("sites".into(), sites);
+            Synced {
+                value: list,
+                updated_at: at,
+            }
+        };
+
+        let mut sites = engine.profile("deep-work").unwrap().rest["sites"].clone();
+        sites
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({ "recipeId": "twitch", "level": "redirected" }));
+        let based_on = engine.profiles.updated_at;
+        let stricter = with_sites(&engine, sites, 2 * MIN);
+        engine
+            .apply_remote(Some(stricter), Some(based_on), None, 2 * MIN)
+            .unwrap();
+        let running = engine.session().unwrap();
+        assert_eq!(running.rules.as_ref(), engine.profile("deep-work"));
+        // Newer than the extension's copy of the session, so it takes the new rules.
+        assert!(engine.synced().1.updated_at >= 2 * MIN);
+
+        let rules = running.rules.clone();
+        let based_on = engine.profiles.updated_at;
+        let looser = with_sites(&engine, serde_json::json!([]), 3 * MIN);
+        engine
+            .apply_remote(Some(looser), Some(based_on), None, 3 * MIN)
+            .unwrap();
+        assert_eq!(engine.session().unwrap().rules, rules);
+        assert!(engine.session_tames_sites(engine.session().unwrap()));
+    }
+
+    #[test]
+    fn sessions_from_the_extension_get_rules_and_keep_them() {
+        let mut engine = engine();
+        let started = Synced {
+            value: Some(remote_session("s1", "writing", None)),
+            updated_at: MIN,
+        };
+        engine.apply_remote(None, None, Some(started), MIN).unwrap();
+        let rules = engine.session().unwrap().rules.clone();
+        assert_eq!(rules.as_ref(), engine.profile("writing"));
+
+        // An older extension sends the session back without them.
+        let mut theirs = engine.session().unwrap().clone();
+        theirs.rules = None;
+        let changed = Synced {
+            value: Some(theirs),
+            updated_at: 2 * MIN,
+        };
+        engine.apply_remote(None, None, Some(changed), 2 * MIN).unwrap();
+        assert_eq!(engine.session().unwrap().rules, rules);
     }
 
     #[test]
@@ -2376,7 +2553,7 @@ mod tests {
         let mut engine = hard_engine();
         let discord = vec![rule("Discord", AppAction::Close)];
         engine.set_profile_apps("deep-work", discord.clone(), 1).unwrap();
-        assert_eq!(engine.profile_apps("deep-work"), discord);
+        assert_eq!(engine.profile("deep-work").unwrap().apps(), discord);
         assert_eq!(engine.snapshot(1).profiles[1].apps, discord);
         assert!(matches!(
             engine.set_profile_apps("nope", vec![], 1),
@@ -2386,6 +2563,8 @@ mod tests {
         engine.start_session("deep-work", 0).unwrap();
         let more = vec![rule("Discord", AppAction::Close), rule("Steam", AppAction::Hide)];
         engine.set_profile_apps("deep-work", more.clone(), MIN).unwrap();
+        // Changes made here reach the running session too.
+        assert_eq!(engine.session_apps(engine.session().unwrap()), more);
         for looser in [
             vec![],
             vec![rule("Discord", AppAction::Hide), rule("Steam", AppAction::Hide)],
@@ -2398,7 +2577,7 @@ mod tests {
         // Other profiles, and this one once the timer's done, can change freely.
         engine.set_profile_apps("writing", vec![], MIN).unwrap();
         engine.set_profile_apps("deep-work", vec![], 60 * MIN).unwrap();
-        assert_eq!(engine.profile_apps("deep-work"), vec![]);
+        assert_eq!(engine.session_apps(engine.session().unwrap()), vec![]);
     }
 
     #[test]

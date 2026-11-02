@@ -143,6 +143,11 @@ pub struct Session {
     /// The timer for this session, copied from its profile when it started.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timer: Option<TimerSettings>,
+    /// A copy of its profile, taken when it started, whose rules it runs by. Changes made on this
+    /// computer reach it too; ones synced from other computers don't, so they can't change what's
+    /// running. Sessions from before there was a copy use their profile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rules: Option<Profile>,
     #[serde(flatten)]
     pub rest: Map<String, Value>,
 }
@@ -349,6 +354,7 @@ mod tests {
                 minutes,
                 ..TimerSettings::default()
             }),
+            rules: None,
             rest: Map::new(),
         }
     }

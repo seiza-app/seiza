@@ -47,6 +47,15 @@ describe('redirectRules', () => {
     expect(blocks(rules, 'https://docs.com/')).toBe(false);
   });
 
+  it("follows the session's own copy of its profile, whatever the profile says now", () => {
+    const loosened: Profile[] = [{ ...profiles[0]!, sites: [] }];
+    const running = { ...session, rules: profiles[0] };
+    expect(blocks(redirectRules({ session: running, profiles: loosened, recipes, now }), 'https://reddit.com/')).toBe(
+      true,
+    );
+    expect(redirectRules({ session, profiles: loosened, recipes, now })).toEqual([]);
+  });
+
   it('redirects nothing without a session or profile', () => {
     expect(redirectRules({ session: null, profiles, recipes, now })).toEqual([]);
     expect(redirectRules({ session, profiles: [], recipes, now })).toEqual([]);

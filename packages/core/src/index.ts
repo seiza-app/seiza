@@ -66,6 +66,7 @@ export {
   withRedirectSettings,
   withSessionOverridesSaved,
   withSessionToggle,
+  withRulesEdited,
   withSiteLevel,
   withStarColor,
   withStarterProfilesReset,
@@ -114,7 +115,7 @@ export {
   withOwnQuote,
   withOwnQuoteRemoved,
 } from './quotes';
-export { starterProfiles } from './profiles';
+export { sessionProfile, starterProfiles } from './profiles';
 export {
   hasRoomForOwnSite,
   isLooser,
