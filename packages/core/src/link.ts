@@ -21,6 +21,11 @@ export type ToDesktop =
   | {
       type: 'state';
       profiles?: Synced<Profile[]>;
+      /**
+       * The `updatedAt` of the app's profiles this side last took, so the app keeps changes it
+       * made after that (from sync, say) rather than letting this side's list undo them.
+       */
+      profilesBasedOn?: number;
       activeSession?: Synced<Session | null>;
       siteSettings?: Synced<SiteSettings[]>;
     }

@@ -48,6 +48,14 @@ export const syncedAt = storage.defineItem<{ profiles: number; activeSession: nu
   { fallback: { profiles: 0, activeSession: 0, siteSettings: 0 } },
 );
 
+/**
+ * The `updatedAt` of the app's profiles this browser last took, sent with its own list so the app
+ * can tell what this browser hadn't seen yet. None until the app first sends its profiles.
+ */
+export const profilesBasedOn = storage.defineItem<number | null>('local:profilesBasedOn', {
+  fallback: null,
+});
+
 /** Whether the tour for new users has been offered (taken or turned down), so the popup offers it once. */
 export const tourOffered = storage.defineItem<boolean>('local:tourOffered', {
   fallback: false,
