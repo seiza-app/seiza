@@ -173,7 +173,7 @@ const left = computed(() => {
 
 <template>
   <section class="read" aria-labelledby="sync">
-    <h2 id="sync" class="mono">{{ number }} — Sync <span class="faint">· dev builds</span></h2>
+    <h2 id="sync" class="mono">{{ number }} — Sync</h2>
 
     <template v-if="status && !syncing">
       <div class="field">

@@ -1,10 +1,12 @@
 <template>
   <aside class="sync-note hud glass">
-    <span class="mono">Later · sync between your computers</span>
+    <span class="mono">Optional · sync between your computers</span>
     <p>
-      Being built: your sessions and your sky on every computer you use. It'll be optional and end-to-end encrypted, so
-      whoever runs the server can't read your data. You run the open-source sync server yourself, for free, and Seiza
-      works fully without it.
+      Your sessions, profiles and sky on every computer you use, end-to-end encrypted, so whoever runs the server can't
+      read your data. You run the open-source sync server yourself, for free (<a
+        href="https://github.com/seiza-app/seiza/tree/main/apps/sync-server"
+        >here's how</a
+      >), or use a friend's. It's off until you set it up, and Seiza works fully without it.
     </p>
   </aside>
 </template>
