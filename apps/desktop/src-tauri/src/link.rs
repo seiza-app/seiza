@@ -248,7 +248,7 @@ fn on_message(app: &AppHandle, link_id: u64, line: &str) {
             }
         }
         FromExtension::GateVisit { visit } => {
-            if let Err(error) = crate::engine(app).record_gate_visit(visit) {
+            if let Err(error) = crate::engine(app).record_gate_visit(visit, crate::now_ms()) {
                 eprintln!("Seiza: couldn't log a gate visit: {error}");
             }
         }

@@ -7,6 +7,7 @@ use serde_json::Value;
 use crate::backup::{History, ImportReport, LoggedSatellite, LoggedVisit};
 use crate::engine::ConstellationName;
 use crate::error::Result;
+use crate::records::{self, Record};
 use crate::satellites::{Satellite, SatelliteRecord, SatelliteState};
 use crate::session::{EndReason, GateVisit, SessionRecord};
 
@@ -27,7 +28,7 @@ pub struct Store {
 }
 
 /// Each entry upgrades the database by one version. Add new ones to the end; never edit old ones.
-const MIGRATIONS: &[&str] = &[
+pub(crate) const MIGRATIONS: &[&str] = &[
     r#"
     CREATE TABLE state (
         key TEXT PRIMARY KEY,
@@ -102,6 +103,39 @@ const MIGRATIONS: &[&str] = &[
         AND (EXISTS (SELECT 1 FROM state) OR EXISTS (SELECT 1 FROM sessions));
     DELETE FROM state WHERE key = 'brokenSession';
 "#,
+    // Ready for sync (records.rs): each session, trip and constellation name gets when it last
+    // changed, and a number from a counter of changes made here, so sync can send what's new.
+    // What's here so far is numbered as made here. A cleared name stays, with no name, so
+    // clearing it can reach other devices.
+    r#"
+    CREATE TABLE change_counter (last INTEGER NOT NULL);
+    INSERT INTO change_counter (last) VALUES (0);
+
+    ALTER TABLE sessions ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE sessions ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
+    UPDATE sessions SET updated_at = ended_at, change_seq = rowid;
+    UPDATE change_counter SET last = (SELECT COALESCE(MAX(rowid), 0) FROM sessions);
+    CREATE INDEX sessions_change_seq ON sessions (change_seq);
+
+    ALTER TABLE gate_visits ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE gate_visits ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
+    UPDATE gate_visits SET updated_at = at, change_seq = rowid + (SELECT last FROM change_counter);
+    UPDATE change_counter SET last = last + (SELECT COALESCE(MAX(rowid), 0) FROM gate_visits);
+    CREATE INDEX gate_visits_change_seq ON gate_visits (change_seq);
+
+    CREATE TABLE names (
+        id TEXT PRIMARY KEY,
+        name TEXT,
+        updated_at INTEGER NOT NULL DEFAULT 0,
+        change_seq INTEGER NOT NULL DEFAULT 0
+    );
+    INSERT INTO names (id, name) SELECT id, name FROM constellation_names;
+    UPDATE names SET change_seq = rowid + (SELECT last FROM change_counter);
+    UPDATE change_counter SET last = last + (SELECT COALESCE(MAX(rowid), 0) FROM names);
+    DROP TABLE constellation_names;
+    ALTER TABLE names RENAME TO constellation_names;
+    CREATE INDEX constellation_names_change_seq ON constellation_names (change_seq);
+"#,
 ];
 
 impl Store {
@@ -112,6 +146,12 @@ impl Store {
     #[cfg(test)]
     pub fn open_in_memory() -> Result<Self> {
         Self::migrated(Connection::open_in_memory()?)
+    }
+
+    /// Brings a database made by the tests up to date.
+    #[cfg(test)]
+    pub fn migrated_for_tests(db: Connection) -> Self {
+        Self::migrated(db).unwrap()
     }
 
     #[cfg(test)]
@@ -156,7 +196,8 @@ impl Store {
     /// so a crash can't log a session that still looks like it's running.
     pub fn end_session<T: Serialize>(&mut self, record: &SessionRecord, key: &str, synced: &Synced<T>) -> Result<()> {
         let tx = self.db.transaction()?;
-        insert_session(&tx, record)?;
+        let change = records::next_change(&tx)?;
+        insert_session(&tx, record, record.ended_at, change)?;
         save(&tx, key, synced)?;
         tx.execute(
             "UPDATE satellites SET state = ?1, state_at = ?2 WHERE state = ?3",
@@ -235,13 +276,18 @@ impl Store {
     }
 
     /// Saves a trip to a redirected site. The extension sends it again as the user answers
-    /// "why?" or continues, so later sends update it, keeping the session it started in.
-    pub fn save_gate_visit(&self, visit: &GateVisit, session_id: Option<&str>) -> Result<()> {
+    /// "why?" or continues, so later sends update it, keeping the session it started in. A send
+    /// that changes nothing leaves it as it was, so it isn't synced again.
+    pub fn save_gate_visit(&self, visit: &GateVisit, session_id: Option<&str>, now: i64) -> Result<()> {
         self.db.execute(
-            "INSERT INTO gate_visits (id, session_id, recipe_id, at, destination, why, intention, continued)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "INSERT INTO gate_visits (id, session_id, recipe_id, at, destination, why, intention, continued,
+                updated_at, change_seq)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
              ON CONFLICT (id) DO UPDATE SET destination = excluded.destination, why = excluded.why,
-                intention = excluded.intention, continued = excluded.continued",
+                intention = excluded.intention, continued = excluded.continued,
+                updated_at = MAX(excluded.updated_at, gate_visits.updated_at + 1), change_seq = excluded.change_seq
+             WHERE gate_visits.destination IS NOT excluded.destination OR gate_visits.why IS NOT excluded.why
+                OR gate_visits.intention IS NOT excluded.intention OR gate_visits.continued IS NOT excluded.continued",
             params![
                 visit.id,
                 session_id,
@@ -251,6 +297,8 @@ impl Store {
                 visit.why,
                 visit.intention,
                 visit.continued,
+                now,
+                records::next_change(&self.db)?,
             ],
         )?;
         Ok(())
@@ -260,11 +308,11 @@ impl Store {
     pub fn add_samples(&mut self, sessions: &[SessionRecord], visits: &[GateVisit]) -> Result<()> {
         let tx = self.db.transaction()?;
         for record in sessions {
-            insert_session(&tx, record)?;
+            insert_session(&tx, record, record.ended_at, records::next_change(&tx)?)?;
         }
         tx.commit()?;
         for visit in visits {
-            self.save_gate_visit(visit, None)?;
+            self.save_gate_visit(visit, None, visit.at)?;
         }
         Ok(())
     }
@@ -290,26 +338,34 @@ impl Store {
         Ok(found.is_some())
     }
 
-    /// The names people gave constellations, as (constellation id, name).
+    /// The names people gave constellations, as (constellation id, name). Cleared ones are
+    /// left out.
     pub fn constellation_names(&self) -> Result<Vec<(String, String)>> {
         let mut statement = self
             .db
-            .prepare("SELECT id, name FROM constellation_names ORDER BY id")?;
+            .prepare("SELECT id, name FROM constellation_names WHERE name IS NOT NULL ORDER BY id")?;
         let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
-    /// Names a constellation, or with None, forgets its name.
-    pub fn name_constellation(&self, id: &str, name: Option<&str>) -> Result<()> {
+    /// Names a constellation, or with None, forgets its name. A forgotten name is kept as
+    /// cleared, so sync can tell other devices.
+    pub fn name_constellation(&self, id: &str, name: Option<&str>, now: i64) -> Result<()> {
+        let change = records::next_change(&self.db)?;
         match name {
             Some(name) => self.db.execute(
-                "INSERT INTO constellation_names (id, name) VALUES (?1, ?2)
-                 ON CONFLICT (id) DO UPDATE SET name = excluded.name",
-                params![id, name],
+                "INSERT INTO constellation_names (id, name, updated_at, change_seq) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT (id) DO UPDATE SET name = excluded.name,
+                    updated_at = MAX(excluded.updated_at, constellation_names.updated_at + 1),
+                    change_seq = excluded.change_seq
+                 WHERE constellation_names.name IS NOT excluded.name",
+                params![id, name, now, change],
             )?,
-            None => self
-                .db
-                .execute("DELETE FROM constellation_names WHERE id = ?1", params![id])?,
+            None => self.db.execute(
+                "UPDATE constellation_names SET name = NULL, updated_at = MAX(?2, updated_at + 1), change_seq = ?3
+                 WHERE id = ?1 AND name IS NOT NULL",
+                params![id, now, change],
+            )?,
         };
         Ok(())
     }
@@ -384,10 +440,11 @@ impl Store {
     }
 
     /// Saves the answer to "Did you do it?" for a logged session that had a goal.
-    pub fn set_goal_met(&self, session_id: &str, met: bool) -> Result<()> {
+    pub fn set_goal_met(&self, session_id: &str, met: bool, now: i64) -> Result<()> {
         self.db.execute(
-            "UPDATE sessions SET goal_met = ?2 WHERE id = ?1 AND goal IS NOT NULL",
-            params![session_id, met],
+            "UPDATE sessions SET goal_met = ?2, updated_at = MAX(?3, updated_at + 1), change_seq = ?4
+             WHERE id = ?1 AND goal IS NOT NULL AND goal_met IS NOT ?2",
+            params![session_id, met, now, records::next_change(&self.db)?],
         )?;
         Ok(())
     }
@@ -456,8 +513,8 @@ impl Store {
         for record in &history.sessions {
             report.sessions += tx.execute(
                 "INSERT OR IGNORE INTO sessions (id, profile_id, profile_name, started_at, ended_at, timer_minutes,
-                    focused_ms, overtime_ms, idle_tail_ms, end_reason, broken, goal, goal_met)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                    focused_ms, overtime_ms, idle_tail_ms, end_reason, broken, goal, goal_met, updated_at, change_seq)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?5, ?14)",
                 params![
                     record.id,
                     record.profile_id,
@@ -472,13 +529,15 @@ impl Store {
                     record.broken,
                     record.goal,
                     record.goal_met,
+                    records::next_change(&tx)?,
                 ],
             )? as u32;
         }
         for LoggedVisit { session_id, visit } in &history.gate_visits {
             report.gate_visits += tx.execute(
-                "INSERT OR IGNORE INTO gate_visits (id, session_id, recipe_id, at, destination, why, intention, continued)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                "INSERT OR IGNORE INTO gate_visits (id, session_id, recipe_id, at, destination, why, intention, continued,
+                    updated_at, change_seq)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?4, ?9)",
                 params![
                     visit.id,
                     session_id,
@@ -488,6 +547,7 @@ impl Store {
                     visit.why,
                     visit.intention,
                     visit.continued,
+                    records::next_change(&tx)?,
                 ],
             )? as u32;
         }
@@ -509,8 +569,8 @@ impl Store {
         }
         for name in &history.constellation_names {
             tx.execute(
-                "INSERT OR IGNORE INTO constellation_names (id, name) VALUES (?1, ?2)",
-                params![name.id, name.name],
+                "INSERT OR IGNORE INTO constellation_names (id, name, change_seq) VALUES (?1, ?2, ?3)",
+                params![name.id, name.name, records::next_change(&tx)?],
             )?;
         }
         for (key, synced) in state {
@@ -518,6 +578,21 @@ impl Store {
         }
         tx.commit()?;
         Ok(report)
+    }
+
+    /// Records changed here since `cursor`, for sync (records.rs).
+    pub fn changed_since(&self, cursor: i64, limit: usize) -> Result<(Vec<Record>, i64)> {
+        records::changed_since(&self.db, cursor, limit)
+    }
+
+    /// Saves records from another device where they win over the copy here (records.rs).
+    pub fn apply(&mut self, records: &[Record]) -> Result<usize> {
+        records::apply(&mut self.db, records)
+    }
+
+    /// Marks every record to be sent again (records.rs).
+    pub fn resend_all(&mut self) -> Result<()> {
+        records::resend_all(&mut self.db)
     }
 
     /// When the first session, gate visit or satellite was logged (epoch ms), if anything has
@@ -535,11 +610,13 @@ impl Store {
     }
 }
 
-fn insert_session(db: &Connection, record: &SessionRecord) -> Result<()> {
+/// Saves a session to the log, replacing any with its id. `change` is its number from the
+/// counter of changes made here (records.rs), or 0 for one that came from another device.
+pub(crate) fn insert_session(db: &Connection, record: &SessionRecord, updated_at: i64, change: i64) -> Result<()> {
     db.execute(
         "INSERT OR REPLACE INTO sessions (id, profile_id, profile_name, started_at, ended_at, timer_minutes,
-            focused_ms, overtime_ms, idle_tail_ms, end_reason, broken, goal, goal_met)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            focused_ms, overtime_ms, idle_tail_ms, end_reason, broken, goal, goal_met, updated_at, change_seq)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         params![
             record.id,
             record.profile_id,
@@ -554,6 +631,8 @@ fn insert_session(db: &Connection, record: &SessionRecord) -> Result<()> {
             record.broken,
             record.goal,
             record.goal_met,
+            updated_at,
+            change,
         ],
     )?;
     Ok(())

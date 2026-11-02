@@ -237,7 +237,7 @@ pub fn constellation_names(app: AppHandle) -> Result<Vec<ConstellationName>> {
 /// Names a constellation, by the id of its first star. A blank name goes back to the made-up one.
 #[tauri::command]
 pub fn name_constellation(app: AppHandle, id: String, name: String) -> Result<()> {
-    crate::engine(&app).name_constellation(&id, &name)
+    crate::engine(&app).name_constellation(&id, &name, crate::now_ms())
 }
 
 /// The night sky's secret for rare events, and when the Sky last showed new things.
