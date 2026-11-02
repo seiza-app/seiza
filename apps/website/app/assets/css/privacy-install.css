@@ -78,6 +78,18 @@
   margin-top: 18px;
 }
 
+/* The extension's two stores, side by side, wrapping on narrow screens. */
+.stores {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.install .stores .btn {
+  margin-top: 0;
+}
+
 .status {
   display: inline-flex;
   align-items: center;

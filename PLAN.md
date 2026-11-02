@@ -515,7 +515,8 @@ Built in slices, one PR each:
 - **First release:** the desktop app on GitHub Releases and the extension on the Chrome Web Store and Firefox Add-ons.
   - ✅ Release prep: pushing a version tag builds the macOS app (one universal build, signed ad hoc only) and the Linux `.deb` and AppImage onto a draft release with install steps (`.github/workflows/release.yml`); `pnpm zip` builds the Chrome store zip without the manifest key; the Firefox zip declares no data collection and comes with a sources zip (`SOURCES.md`); the privacy policy (`PRIVACY.md`) and store listing text (`apps/extension/STORE.md`).
   - ✅ The Chrome Web Store's id for the extension is in `hosts.rs`, next to the unpacked build's.
-  - Left: checking each recipe on the real sites while logged in; screenshots and the promo tile; submitting to both stores.
+  - ✅ Screenshots and the promo tile; listed on the [Chrome Web Store](https://chromewebstore.google.com/detail/seiza/nencjadggelocffidegejpekamaeopjc) and [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/seiza-app/) (November 2026).
+  - Left: checking each recipe on the real sites while logged in.
   - Not paying for Apple or Windows code signing for now. Unsigned builds work after **Open Anyway** in macOS's Privacy & Security settings, which the release notes explain.
 
 **Two smaller session changes** (decided in the sync planning, November 2026)
