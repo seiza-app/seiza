@@ -66,7 +66,9 @@ fn serve(config: Config) -> Result<(), String> {
     runtime.block_on(async move {
         let db = db::open(&config.db_path).map_err(|error| format!("couldn't open the database: {error}"))?;
         let addr = config.addr;
-        let app = api::router(api::App::new(db, config));
+        let app = api::App::new(db, config);
+        tokio::spawn(api::sweep_pairings(app.clone()));
+        let app = api::router(app);
         let listener = tokio::net::TcpListener::bind(addr)
             .await
             .map_err(|error| format!("couldn't listen on {addr}: {error}"))?;
