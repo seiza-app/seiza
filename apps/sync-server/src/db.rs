@@ -195,9 +195,10 @@ pub struct DeviceRow {
     pub last_seen_at: i64,
 }
 
+/// A group's devices, in the order they were added.
 pub fn devices(db: &Connection, group_id: &str) -> rusqlite::Result<Vec<DeviceRow>> {
     let mut statement = db.prepare(
-        "SELECT id, label, created_at, last_seen_at FROM devices WHERE group_id = ?1 ORDER BY created_at, id",
+        "SELECT id, label, created_at, last_seen_at FROM devices WHERE group_id = ?1 ORDER BY created_at, rowid",
     )?;
     statement
         .query_map(params![group_id], |row| {
