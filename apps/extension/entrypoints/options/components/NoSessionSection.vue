@@ -48,8 +48,8 @@ function setAlways(recipe: SiteRecipe, on: boolean) {
   <h2>No session</h2>
   <p class="help">
     How sites look when no session is running, whichever profile you use. Tame a site all the time to keep its feeds and
-    the like hidden every day; in a session, its profile's settings apply instead. Parts you hide on a page, from Lock
-    In's popup on the site, are hidden whenever it's tamed, in a session too.
+    the like hidden every day; in a session, its profile's settings apply instead. Parts you hide on a page, from
+    Seiza's popup on the site, are hidden whenever it's tamed, in a session too.
   </p>
   <ul v-if="sites" class="list sites">
     <li v-for="recipe in listed" :key="recipe.id">
