@@ -27,6 +27,14 @@ pub enum Error {
     Update(tauri_plugin_updater::Error),
     /// There's no new version to install, or no check has found one yet.
     NoUpdate,
+    /// Setting up sync, pairing or reaching the sync server went wrong.
+    Sync(String),
+    /// This computer isn't in a sync group.
+    NotSyncing,
+    /// This computer is already in a sync group.
+    AlreadySyncing,
+    /// Another device removed this one from its sync group, so sync is off here now.
+    RemovedFromSync,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -56,6 +64,12 @@ impl fmt::Display for Error {
             Error::Blocker(problem) | Error::Backup(problem) => f.write_str(problem),
             Error::Update(error) => write!(f, "{error}"),
             Error::NoUpdate => f.write_str("there's no new version to install"),
+            Error::Sync(problem) => f.write_str(problem),
+            Error::NotSyncing => f.write_str("this computer isn't syncing"),
+            Error::AlreadySyncing => f.write_str("this computer is already in a sync group; leave it first"),
+            Error::RemovedFromSync => {
+                f.write_str("another computer removed this one from the sync group, so sync is off here now")
+            }
         }
     }
 }
@@ -90,6 +104,24 @@ impl From<crate::hotkey::Problem> for Error {
 impl From<tauri_plugin_updater::Error> for Error {
     fn from(error: tauri_plugin_updater::Error) -> Self {
         Error::Update(error)
+    }
+}
+
+impl From<crate::sync::client::ClientError> for Error {
+    fn from(error: crate::sync::client::ClientError) -> Self {
+        Error::Sync(error.to_string())
+    }
+}
+
+impl From<crate::sync::settings::BadAddress> for Error {
+    fn from(problem: crate::sync::settings::BadAddress) -> Self {
+        Error::Sync(problem.to_string())
+    }
+}
+
+impl From<crate::sync::pairing::BadCode> for Error {
+    fn from(problem: crate::sync::pairing::BadCode) -> Self {
+        Error::Sync(problem.to_string())
     }
 }
 

@@ -18,7 +18,8 @@ const TAG_BYTES: usize = 16;
 /// can't be passed off as another kind, or moved to another group, without failing to open.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Purpose {
-    /// A batch of records.
+    /// A batch of records. Sealed from build step 5 on.
+    #[allow(dead_code)]
     Batch,
     /// A device's name, as the server's device list shows it. Sealed before the group has an
     /// id (the first device names itself as it starts the group), so it's bound to no group.

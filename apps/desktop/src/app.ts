@@ -7,6 +7,7 @@ import type {
   GlowColor,
   ImportReport,
   InstalledApp,
+  PairingState,
   SatelliteAction,
   SavedBackup,
   SessionRecord,
@@ -14,6 +15,8 @@ import type {
   SiteRule,
   SkyState,
   Snapshot,
+  SyncDevice,
+  SyncStatus,
   TimerSettings,
   UpdateStatus,
 } from '@lock-in/core';
@@ -165,6 +168,45 @@ export const markUpdateOffered = (version: string) => invoke<void>('update_offer
 
 /** A version's page on GitHub: what's new in it, and its downloads. */
 export const releasePage = (version: string) => `https://github.com/seiza-app/seiza/releases/tag/v${version}`;
+
+// Settings › Sync (sync/setup.rs). A pairing runs in the core, which sends how it's going as
+// "sync-pairing"; whether this computer syncs, and with which server, comes as "sync".
+
+/** Whether this computer syncs, kept up to date. */
+export function useSyncStatus() {
+  const status = ref<SyncStatus>();
+  const stopListening = listen<SyncStatus>('sync', (event) => (status.value = event.payload));
+  void invoke<SyncStatus>('sync_status').then((value) => (status.value ??= value));
+  onUnmounted(() => void stopListening.then((stop) => stop()));
+  return status;
+}
+
+/** How a pairing is going, on either computer, kept up to date. */
+export function usePairing() {
+  const pairing = ref<PairingState>({ phase: 'idle' });
+  const stopListening = listen<PairingState>('sync-pairing', (event) => (pairing.value = event.payload));
+  void invoke<PairingState>('sync_pairing').then((value) => {
+    if (pairing.value.phase === 'idle') pairing.value = value;
+  });
+  onUnmounted(() => void stopListening.then((stop) => stop()));
+  return pairing;
+}
+
+export const startSyncGroup = (address: string, deviceName: string, invite?: string) =>
+  invoke<void>('sync_start_group', { address, deviceName, invite });
+export const joinSyncGroup = (address: string, code: string, deviceName: string) =>
+  invoke<PairingState>('sync_join', { address, code, deviceName });
+export const addSyncDevice = () => invoke<PairingState>('sync_add_device');
+/** Add or Don't add, once the new computer has typed the code. */
+export const answerSyncDevice = (add: boolean) => invoke<void>('sync_answer_device', { add });
+/** Stops the pairing that's running, so its code can't be used. */
+export const stopPairing = () => invoke<void>('sync_stop_pairing');
+export const syncDevices = () => invoke<SyncDevice[]>('sync_devices');
+export const removeSyncDevice = (deviceId: string) => invoke<void>('sync_remove_device', { deviceId });
+/** Leaves sync. Resolves to whether the server heard. */
+export const leaveSync = () => invoke<boolean>('sync_leave');
+export const moveSyncServer = (address: string, invite?: string) =>
+  invoke<void>('sync_move_server', { address, invite });
 
 /** Trips to redirected sites that went back to focus, oldest first, for comets. */
 export const turnedBack = () => invoke<GateVisitRecord[]>('turned_back');

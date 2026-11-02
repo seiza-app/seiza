@@ -7,8 +7,8 @@
 //   1. hello, host → joiner: the group's id and the host's half of SPAKE2.
 //   2. reply, joiner → host: the joiner's half, proof that it has the same key, and its name,
 //      sealed with that key.
-//   3. welcome, host → joiner, once its person says Add: the host's proof, and the group's key,
-//      sealed with that key.
+//   3. welcome, host → joiner, once its person says Add: the host's proof, and the group's key
+//      and the sky's secret (so every device draws one sky), sealed with that key.
 //
 // A wrong code fails one of the proofs, and that side then ends the pairing on the server, so
 // each code gets one guess. The group's id, the pairing's number and a purpose go into the keys,
@@ -165,7 +165,19 @@ struct Reply {
 struct Welcome {
     proof: String,
     key: String,
+    sky: String,
 }
+
+/// What the new device takes from the welcome.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Welcomed {
+    pub key: GroupKey,
+    /// The night sky's secret (engine.rs), so this device draws the same sky as the others.
+    pub sky: String,
+}
+
+/// The longest sky secret a welcome carries, as the backup import allows.
+const MAX_SKY_SECRET: usize = 64;
 
 /// The keys both sides derive from SPAKE2's result.
 struct Keys {
@@ -282,15 +294,18 @@ pub struct Checked {
 }
 
 impl Checked {
-    /// The welcome to send once its person says Add, carrying the group's key.
-    pub fn welcome(&self, group_key: &GroupKey) -> Vec<u8> {
+    /// The welcome to send once its person says Add, carrying the group's key and the sky's
+    /// secret.
+    pub fn welcome(&self, group_key: &GroupKey, sky: &str) -> Vec<u8> {
         let proof = proof(&self.keys.host_proof, &self.host_half, &self.joiner_half)
             .finalize()
             .into_bytes();
         let key = crypto::seal(&self.keys.channel, b"seiza pairing v1 key", group_key.as_bytes());
+        let sky = crypto::seal(&self.keys.channel, b"seiza pairing v1 sky", sky.as_bytes());
         write(&Welcome {
             proof: STANDARD.encode(proof),
             key: STANDARD.encode(key),
+            sky: STANDARD.encode(sky),
         })
     }
 }
@@ -352,16 +367,22 @@ impl Joiner {
         &self.group_id
     }
 
-    /// Checks the host's proof and takes the group's key from its welcome.
-    pub fn finish(self, welcome: &[u8]) -> Result<GroupKey, PairingError> {
+    /// Checks the host's proof and takes the group's key and the sky's secret from its welcome.
+    pub fn finish(self, welcome: &[u8]) -> Result<Welcomed, PairingError> {
         let welcome: Welcome = read(welcome)?;
         proof(&self.keys.host_proof, &self.host_half, &self.joiner_half)
             .verify_slice(&decode(&welcome.proof)?)
             .map_err(|_| PairingError::WrongCode)?;
-        crypto::open(&self.keys.channel, b"seiza pairing v1 key", &decode(&welcome.key)?)
+        let key = crypto::open(&self.keys.channel, b"seiza pairing v1 key", &decode(&welcome.key)?)
             .ok()
             .and_then(|key| GroupKey::from_bytes(&key))
-            .ok_or(PairingError::Garbled)
+            .ok_or(PairingError::Garbled)?;
+        let sky = crypto::open(&self.keys.channel, b"seiza pairing v1 sky", &decode(&welcome.sky)?)
+            .ok()
+            .and_then(|sky| String::from_utf8(sky).ok())
+            .filter(|sky| !sky.is_empty() && sky.len() <= MAX_SKY_SECRET)
+            .ok_or(PairingError::Garbled)?;
+        Ok(Welcomed { key, sky })
     }
 }
 
@@ -377,8 +398,9 @@ mod tests {
         let (joiner, reply) = Joiner::reply(joiner_code, &hello, "MacBook Air")?;
         assert_eq!(joiner.group_id(), GROUP);
         let checked = host.check(&reply)?;
-        let received = joiner.finish(&checked.welcome(&group_key))?;
-        Ok((checked.device_name, group_key, received))
+        let welcomed = joiner.finish(&checked.welcome(&group_key, "the sky's secret"))?;
+        assert_eq!(welcomed.sky, "the sky's secret");
+        Ok((checked.device_name, group_key, welcomed.key))
     }
 
     #[test]
@@ -412,9 +434,10 @@ mod tests {
                 write(&Welcome {
                     proof: STANDARD.encode([0; 32]),
                     key: STANDARD.encode([0; 64]),
+                    sky: STANDARD.encode([0; 64]),
                 })
             }
-            Ok(checked) => checked.welcome(&GroupKey::generate()),
+            Ok(checked) => checked.welcome(&GroupKey::generate(), "sky"),
         };
         assert_eq!(joiner.finish(&welcome).unwrap_err(), PairingError::WrongCode);
     }
@@ -555,6 +578,7 @@ mod tests {
         let (spake, half) = Spake2::<Ed25519Group>::start_b_with_rng(&password(&code), &ids.0, &ids.1, Fixed(2));
         let (joiner, reply) = Joiner::replied(spake, half, &code, &hello, "Mac").unwrap();
         let key = GroupKey::generate();
-        assert_eq!(joiner.finish(&host.check(&reply).unwrap().welcome(&key)).unwrap(), key);
+        let welcome = host.check(&reply).unwrap().welcome(&key, "sky");
+        assert_eq!(joiner.finish(&welcome).unwrap(), Welcomed { key, sky: "sky".into() });
     }
 }
