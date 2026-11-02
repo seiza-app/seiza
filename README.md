@@ -34,28 +34,62 @@ The extension works on its own. The desktop app adds:
 - **A quiet timer** that can end without a sound, and sessions that end by themselves when you've walked away.
 - **A weekly report**, and backups you can bring to another computer.
 - **Blocking without the extension** (macOS, turned on in Settings): restricted sites are shut for every browser and app during a session.
+- **Sync between your computers**, through a server you run yourself (below).
 
-Seiza has no accounts and no telemetry. Everything stays on your device. See [PRIVACY.md](PRIVACY.md).
+Seiza has no accounts and no telemetry. Everything stays on your device unless you turn on sync, and then it's encrypted before it leaves. See [PRIVACY.md](PRIVACY.md).
+
+## Sync between your computers
+
+Optional, and off until you set it up. Your finished sessions and their goals, visits to redirected sites, constellation names and profiles reach every computer in your sync group, so each one draws the same sky, streaks and weekly report. Settings stay per computer.
+
+- **End-to-end encrypted.** The app encrypts everything before it's sent, with a key the server never gets. The server sees which computers are in a group, when they sync and how much they store, and nothing else.
+- **No accounts.** Your first computer starts a group, and each other computer joins with a short one-time pairing code shown on one already in it.
+- **Your own server.** Seiza has no sync server of its own. You run the open-source one (one small program and one SQLite file), or use one a friend runs. Every computer keeps the whole log, so losing the server loses nothing.
+
+### Running your own sync server
+
+The full guide, with every setting, command and the API, is in [apps/sync-server/README.md](apps/sync-server/README.md). In short:
+
+1. **Run it.** On any Linux machine with Docker, such as a Proxmox LXC or a Raspberry Pi, copy [`compose.example.yml`](apps/sync-server/compose.example.yml) into a folder as `compose.yml` and run `docker compose up -d`. The image is `ghcr.io/seiza-app/seiza-sync`, a few megabytes, for amd64 and arm64. It listens on port 8080 and uses about 5 MB of memory.
+2. **Put it behind HTTPS.** The app only uses plain `http://` on your own computer or local network. To sync from anywhere, give it an address over HTTPS, for example with a Cloudflare Tunnel (the guide walks through it) or any reverse proxy.
+3. **Decide who can start a group.** By default the server takes exactly one group, the first one started, and then closes, so a personal server needs no setup. To share it with friends, set `SEIZA_SYNC_NEW_GROUPS=invites` and give each of them a code from `docker compose exec seiza-sync seiza-sync invite`.
+4. **Connect your computers.** On the first one, open Settings › Sync, type the server's address under **Use your own server**, and choose **Start a new sync group**. On that computer, choose **Add a device** for a pairing code; on the next one, enter the same address, choose **Join with a pairing code** and type it in. The first computer then asks whether to add it.
+
+To update, run `docker compose pull && docker compose up -d`.
 
 ## Install
 
 - **Desktop app:** download it from the [latest release](https://github.com/seiza-app/seiza/releases/latest): a `.dmg` for macOS, or a `.deb` or `.AppImage` for Linux. On macOS, it isn't signed with a paid Apple Developer account, so macOS asks you to allow it once: open it, click **Done**, then **System Settings › Privacy & Security › Open Anyway**. The release notes walk through it.
-- **Browser extension:** in review at the Chrome Web Store and Firefox Add-ons. Until it's listed, build it from source (below).
+- **Browser extension:** in review at the Chrome Web Store and Firefox Add-ons. Until it's listed, build it from source (below) and load it by hand ([apps/extension/README.md](apps/extension/README.md) says how). It works in Chrome, Brave, Edge, Arc, Firefox and Zen.
+- **Sync server (optional):** see [Running your own sync server](#running-your-own-sync-server).
 
-The app and the extension each work on their own. Install both and they link up by themselves.
+The app and the extension each work on their own. Install both and they link up by themselves, in every browser you use it in.
+
+Windows isn't supported yet. On Linux, the idle check needs GNOME, and blocking without the extension is macOS only for now.
 
 ## What's here
 
 ```
 apps/
-  extension/   Browser extension (WXT + Vue). Chrome, Brave, Edge, Arc, Firefox, Zen.
-  desktop/     Desktop app (Tauri 2 + Vue). macOS and Linux.
-  website/     Product website (Nuxt, static, on Cloudflare Workers).
+  extension/     Browser extension (WXT + Vue). Chrome, Brave, Edge, Arc, Firefox, Zen.
+  desktop/       Desktop app (Tauri 2 + Vue). macOS and Linux.
+  sync-server/   Self-hosted sync server (Rust, axum + SQLite, one Docker image).
+  website/       Product website (Nuxt, static, on Cloudflare Workers).
 packages/
-  core/        Shared types and logic: matching, recipes, profiles, sessions.
-  recipes/     Built-in site recipes.
-  quotes/      Bundled public-domain quotes for the app's Sky.
+  core/          Shared types and logic: matching, recipes, profiles, sessions, the sky.
+  recipes/       Built-in site recipes.
+  quotes/        Bundled public-domain quotes for the app's Sky.
+prototypes/      Design mock-ups the app and website were built from.
+PLAN.md          The roadmap and the reasoning behind each feature.
 ```
+
+Each app has its own README on how it works inside: [extension](apps/extension/README.md), [desktop](apps/desktop/README.md), [sync server](apps/sync-server/README.md) and [website](apps/website/README.md).
+
+How the parts talk to each other:
+
+- **Extension ↔ desktop app:** over the browser's Native Messaging, which never leaves the computer. The app installs the bridge for each browser it finds, and both keep profiles, the running session, site settings and visits to redirected sites in step, the newest change winning.
+- **Desktop app ↔ sync server:** HTTPS, only once sync is set up. Records are compressed, then sealed with the group's key (XChaCha20-Poly1305), and sent in batches; the key reaches a new computer through a SPAKE2 pairing the server only relays.
+- **Everything else stays put:** the extension makes no network requests, and the app's only other one is a daily update check to GitHub.
 
 ## Getting started
 
@@ -79,16 +113,38 @@ pnpm format        # Prettier (pnpm format:check only reports)
 pnpm build
 ```
 
-The desktop app also needs the [Rust toolchain](https://rustup.rs) and the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/). Run it with `pnpm dev:desktop`.
+The desktop app also needs the [Rust toolchain](https://rustup.rs) and the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/). Run it with `pnpm dev:desktop`, and its Rust tests with `cargo test` in `apps/desktop/src-tauri`.
 
-To release, raise the version in `apps/desktop/src-tauri/tauri.conf.json`, `Cargo.toml` and both apps' `package.json`, then push a matching tag like `v0.2.0`. That builds the macOS and Linux apps onto a draft release ([`.github/workflows/release.yml`](.github/workflows/release.yml)), which is published by hand.
+The website runs with `pnpm dev:website`.
+
+The sync server is plain Rust. To try the app against one locally:
+
+```bash
+cd apps/sync-server
+cargo run -- serve    # listens on 0.0.0.0:8080, database in ./seiza-sync.db
+```
+
+Then use `http://localhost:8080` as the address in the app's Settings › Sync. Its tests are `cargo test` in the same folder.
+
+## CI and releases
+
+CI ([`.github/workflows`](.github/workflows)) checks formatting, lint, types and tests for every part, runs the extension's browser tests, checks dependency licenses and advisories, and builds the sync server's Docker image.
+
+- **Desktop app:** raise the version in `apps/desktop/src-tauri/tauri.conf.json`, `Cargo.toml` and both apps' `package.json`, then push a matching tag like `v0.2.0`. That builds the macOS and Linux apps onto a draft release ([`release.yml`](.github/workflows/release.yml)), which is published by hand. Installed apps from 0.2.0 on find it within a day and offer to update.
+- **Sync server:** every change merged to `main` publishes `ghcr.io/seiza-app/seiza-sync:latest` (and `:sha-<commit>`) once its checks pass ([`sync-server.yml`](.github/workflows/sync-server.yml)).
+- **Extension:** `pnpm --filter @lock-in/extension zip` and `zip:firefox` build the store zips; [apps/extension/STORE.md](apps/extension/STORE.md) has the rest.
+- **Website:** deployed by Cloudflare Workers Builds whenever `main` changes.
+
+Dependencies are only taken once they've been out for at least two weeks (`minimumReleaseAge` in `pnpm-workspace.yaml`, and Dependabot's cooldown), which gives a bad release time to be caught.
 
 ## Contributing
 
 Recipes break when sites change their HTML, so fixes to the selectors in `packages/recipes` are especially welcome. Each recipe is plain JSON, and `pnpm test` checks that every selector is safe to inject.
 
-Before opening a pull request, run `pnpm format`, `pnpm lint` and `pnpm test`; CI checks all three.
+Before opening a pull request, run `pnpm format`, `pnpm lint` and `pnpm test`; CI checks all three. For Rust changes, also run `cargo fmt`, `cargo clippy --all-targets -- -D warnings` and `cargo test` in the crate you changed.
+
+Bugs and ideas go to [the issues](https://github.com/seiza-app/seiza/issues).
 
 ## License
 
-[AGPL-3.0](LICENSE). You're free to use, study, change and share Seiza. If you run a modified version for other people, including as a hosted service, you must share your changes under the same license.
+[AGPL-3.0](LICENSE). You're free to use, study, change and share Seiza. If you run a modified version for other people, including as a hosted service (a sync server you've changed, say), you must share your changes under the same license.

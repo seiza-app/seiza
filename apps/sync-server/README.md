@@ -4,9 +4,30 @@ A small server you run yourself so Seiza can sync between your computers (PLAN.m
 one Rust program with one SQLite file, in one Docker image of a few megabytes. It runs on one
 thread in about 5 MB of memory, and answers in under a millisecond, ten devices at once included.
 
-> **In development builds only, for now.** Settings › Sync can start a group, pair devices and
-> sync their session logs, trips, constellation names and profiles, in development builds of the
-> app until the checks before release are done.
+It syncs each computer's finished sessions (with their goals), visits to redirected sites,
+constellation names and profiles. Live sessions, started on one computer and running on all of
+them, come next (PLAN.md §8, Sync, step 8).
+
+## Setting it up, start to finish
+
+1. **Run the server** with Docker ([below](#running-it-with-docker)), on any Linux machine that
+   stays on: a Proxmox LXC, a NAS, a Raspberry Pi or a small VPS.
+2. **Give it an HTTPS address.** The app talks to plain `http://` only on the same computer or the
+   local network, so to sync from anywhere, put it behind HTTPS: a Cloudflare Tunnel
+   ([below](#in-a-proxmox-lxc-behind-a-cloudflare-tunnel)), or a reverse proxy like Caddy that
+   gets a certificate for you.
+3. **Choose who can start a group** (`SEIZA_SYNC_NEW_GROUPS`, [below](#settings)). The default
+   suits a server for just you. For friends, see [Sharing it](#sharing-it-with-friends).
+4. **Connect your first computer.** In Seiza, open Settings › Sync, type the server's address under
+   **Use your own server**, check **This computer's name**, and choose **Start a new sync group**.
+5. **Add your other computers.** On the first one, choose **Add a device**: it shows a code like
+   `4821-orbit-lamp-quote-river`, good once, for five minutes. On the new one, type the same
+   address, choose **Join with a pairing code** and enter it. The first computer asks "Add …?";
+   choose **Add**. If the new computer already has sessions of its own, it offers **Join and
+   match the sky**, which keeps its stars and redraws its rare events to match the group's.
+
+Settings › Sync then lists the group's computers, when each was last seen and when this one last
+synced, with **Remove** for a lost one, **Move…** to another server, and **Leave sync…**.
 
 ## What it can and can't see
 
@@ -41,6 +62,21 @@ is `seiza-sync health`.
 **Start your own group straight away.** By default the server accepts exactly one group, the first
 device's, and then closes to new ones, so it's yours from the moment your first computer joins.
 
+### Sharing it with friends
+
+Each person gets a group of their own, which the others can't read or join. To let friends start
+theirs, set `SEIZA_SYNC_NEW_GROUPS: invites` in `compose.yml`, run `docker compose up -d` again,
+and make a code for each friend:
+
+```sh
+docker compose exec seiza-sync seiza-sync invite
+```
+
+Each code starts one group and lasts 7 days. Your friend types it in the **Invite code** field
+Settings › Sync shows when they start a group. Your own group stays as it is. To keep an eye on
+things, `seiza-sync stats` counts groups, devices and storage, and `SEIZA_SYNC_GROUP_MAX_MB` caps
+what each group can store (50 MB by default, years of use).
+
 ### Updating
 
 Starting the container doesn't fetch a newer image by itself. To update, from the folder with
@@ -63,9 +99,10 @@ schedule. Building the image yourself works too: use `build: .` in `compose.yml`
 
 ## In a Proxmox LXC behind a Cloudflare Tunnel
 
-1. Make an LXC (Debian is fine) with Docker in it, and run the server as above. (Without Docker:
-   build it with `cargo build --release` and run `target/release/seiza-sync` as a systemd service,
-   with the settings below in its environment.)
+1. Make an LXC (Debian is fine; 1 core, 256 MB of memory and a couple of GB of disk is plenty).
+   Docker in an LXC needs **Options › Features › Nesting** on, and `keyctl` too for an
+   unprivileged one. Install Docker in it and run the server as above. Or skip Docker
+   ([below](#without-docker)).
 2. In Cloudflare's Zero Trust dashboard, add a public hostname to your tunnel, e.g.
    `sync.example.com`, pointing at `http://<the LXC's address>:8080`. Cloudflare serves it over
    HTTPS; the server itself only speaks plain HTTP, so don't expose port 8080 to the internet any
@@ -76,6 +113,41 @@ schedule. Building the image yourself works too: use `build: .` in `compose.yml`
 
 Cloudflare Access doesn't fit here: it's made for people signing in through a browser, and the app
 talks to the server directly. The server's own protections are below.
+
+### Without Docker
+
+The server is one program with no other parts. Build it with Rust (`cargo build --release` here
+makes `target/release/seiza-sync`), copy it to `/usr/local/bin/`, give it a user of its own
+(`useradd --system --no-create-home --shell /usr/sbin/nologin seiza`), and run it as a systemd
+service:
+
+```ini
+# /etc/systemd/system/seiza-sync.service
+[Unit]
+Description=Seiza sync server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/seiza-sync serve
+Environment=SEIZA_SYNC_DB=/var/lib/seiza-sync/seiza-sync.db
+Environment=SEIZA_SYNC_ADDR=0.0.0.0:8080
+User=seiza
+StateDirectory=seiza-sync
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Then `systemctl enable --now seiza-sync`. Run its commands as the server's user, with the same
+database, so any files they make belong to it:
+
+```sh
+sudo -u seiza env SEIZA_SYNC_DB=/var/lib/seiza-sync/seiza-sync.db seiza-sync stats
+```
+
+To update, build and copy the new version in, then `systemctl restart seiza-sync`.
 
 ## Settings
 
@@ -103,8 +175,7 @@ In Docker, run them with `docker compose exec seiza-sync seiza-sync <command>`.
 ## Backups
 
 Every device keeps its whole log, so losing the server loses nothing: point your devices at a new
-one (Settings › Sync › Move to another server, once it exists) and one of them uploads everything
-again. A backup just saves you re-pairing:
+one (Settings › Sync › **Move…**) and one of them uploads everything again. A backup just saves you re-pairing:
 
 ```sh
 docker compose exec seiza-sync seiza-sync backup /data/backup.db

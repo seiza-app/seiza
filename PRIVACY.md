@@ -1,6 +1,6 @@
 # Privacy
 
-Seiza collects nothing. It has no accounts, no analytics, no ads, and no servers of its own. Nothing you do in it is sent to us or anyone else.
+Seiza collects nothing. It has no accounts, no analytics, no ads, and no servers of its own. Nothing you do in it is sent to us or anyone else. If you turn on sync, your data goes to a sync server you choose, encrypted so that server can't read it.
 
 This covers the Seiza desktop app and the Seiza browser extension.
 
@@ -10,7 +10,7 @@ This covers the Seiza desktop app and the Seiza browser extension.
 - **Your history:** when your sessions ran, and each visit to a redirected site: which site, when, how many times today, and the reason you gave, if you gave one. This is what the night sky and the weekly report are drawn from.
 - **Your satellites and your own quotes.**
 
-The extension keeps its copy in your browser's extension storage. The app keeps its copy in its data folder on your computer. Uninstalling either removes its copy. A backup from the app's Settings is a file you save wherever you choose.
+The extension keeps its copy in your browser's extension storage. The app keeps its copy in its data folder on your computer, along with sync's key and this computer's sign-in for the sync server if you use sync. Uninstalling either removes its copy. A backup from the app's Settings is a file you save wherever you choose.
 
 ## What the extension and the app share
 
@@ -32,7 +32,11 @@ On macOS, if you turn on blocking sites without the extension, the app lists you
 
 The extension makes no network requests.
 
-The app makes one: unless you turn it off in Settings › Updates, it asks GitHub once a day whether there's a new version of Seiza, by downloading a small file (`latest.json`) from the project's releases. The request carries nothing about you or what you do in Seiza, though like any web request it shows GitHub your IP address ([GitHub's privacy statement](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement) covers what GitHub keeps). If you update, the new version downloads from GitHub too, and the app checks its signature before installing it. Seiza 0.1.0 doesn't check for updates.
+The app makes two kinds, and you can turn off both.
+
+**Update checks.** Unless you turn them off in Settings › Updates, the app asks GitHub once a day whether there's a new version of Seiza, by downloading a small file (`latest.json`) from the project's releases. The request carries nothing about you or what you do in Seiza, though like any web request it shows GitHub your IP address ([GitHub's privacy statement](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement) covers what GitHub keeps). If you update, the new version downloads from GitHub too, and the app checks its signature before installing it.
+
+**Sync, only if you set it up.** Sync is off until you set it up in Settings › Sync, and Seiza has no sync server of its own: you use one you run yourself, or one someone you trust runs ([how to run one](https://github.com/seiza-app/seiza/tree/main/apps/sync-server)). Once it's on, the app sends that server your finished sessions and their goals, your visits to redirected sites, your constellation names, your profiles and this computer's name, and fetches your other computers' changes. All of it is encrypted on your computer with a key the server never gets, so whoever runs the server can't read it. They can see which computers are in your group, when each last synced, how much it stores, and the IP addresses it syncs from. Your settings stay on each computer. **Leave sync** in Settings › Sync stops this computer syncing and keeps everything on it, and the server deletes your group once its last computer leaves. The key and the sign-in are left out of backups.
 
 The quotes are bundled with the app. Links you add yourself, like the support link or your own links on the redirect page, open in your browser like any other link.
 

@@ -17,8 +17,8 @@
       <li class="hud glass reveal" style="--d: 340ms">
         <strong>One update check a day</strong>
         <p>
-          The app asks GitHub once a day if there's a new version, which you can turn off. The extension makes no
-          requests. The source code is public, so you can check any of it.
+          The app checks once a day if there's a new version, which you can turn off. The extension makes no requests.
+          The source code is public, so you can check any of it.
         </p>
       </li>
     </ul>
