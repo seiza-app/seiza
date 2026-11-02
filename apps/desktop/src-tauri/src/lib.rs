@@ -15,6 +15,9 @@ mod launches;
 mod link;
 mod processes;
 mod quotes;
+// Sync uses these from its next steps on (PLAN §8 Sync).
+#[allow(dead_code)]
+mod records;
 mod samples;
 mod satellites;
 mod session;

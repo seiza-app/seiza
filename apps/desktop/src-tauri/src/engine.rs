@@ -6,6 +6,7 @@ use crate::backup::{Backup, History, ImportReport};
 use crate::browsers::KnownBrowser;
 use crate::error::{Error, Result};
 use crate::quotes::{MAX_OWN_QUOTES, OwnQuote};
+use crate::records::Record;
 use crate::satellites::{self, DONE_TASKS_SHOWN_MS, Satellite, SatelliteAction, SatelliteRecord, SatelliteState};
 use crate::session::{
     EndReason, GateVisit, MAX_GOAL_LENGTH, Profile, Session, SessionGoal, SessionRecord, is_star_color,
@@ -561,7 +562,7 @@ impl Engine {
         if !waiting {
             return Ok(());
         }
-        self.store.set_goal_met(session_id, met)?;
+        self.store.set_goal_met(session_id, met, now)?;
         self.save_goal(None, now)
     }
 
@@ -779,13 +780,39 @@ impl Engine {
     }
 
     /// Logs a trip to a redirected site, with the session it happened in.
-    pub fn record_gate_visit(&self, visit: GateVisit) -> Result<()> {
+    pub fn record_gate_visit(&self, visit: GateVisit, now: i64) -> Result<()> {
         let visit = visit.trimmed();
         let session_id = self
             .session()
             .filter(|s| visit.at >= s.started_at)
             .map(|s| s.id.as_str());
-        self.store.save_gate_visit(&visit, session_id)
+        self.store.save_gate_visit(&visit, session_id, now)
+    }
+
+    /// Up to `limit` records changed here since `cursor`, and the cursor for next time, for
+    /// sync to send (records.rs).
+    #[allow(dead_code)]
+    pub fn changed_records(&self, cursor: i64, limit: usize) -> Result<(Vec<Record>, i64)> {
+        self.store.changed_since(cursor, limit)
+    }
+
+    /// Saves records sync fetched from other devices, where they win over the copy here.
+    /// Emergency passes used elsewhere count here too, since they're in the log. Returns how
+    /// many changed something.
+    #[allow(dead_code)]
+    pub fn apply_records(&mut self, records: &[Record]) -> Result<usize> {
+        let applied = self.store.apply(records)?;
+        if applied > 0 {
+            self.pass_uses = self.store.pass_uses()?;
+        }
+        Ok(applied)
+    }
+
+    /// Marks every record to be sent again, for moving to another server or starting a new
+    /// group.
+    #[allow(dead_code)]
+    pub fn resend_all_records(&mut self) -> Result<()> {
+        self.store.resend_all()
     }
 
     /// The session log, oldest first.
@@ -804,12 +831,12 @@ impl Engine {
 
     /// Names the constellation whose first star is the session `id`, which may be the one
     /// running. A blank name goes back to the made-up one.
-    pub fn name_constellation(&self, id: &str, name: &str) -> Result<()> {
+    pub fn name_constellation(&self, id: &str, name: &str, now: i64) -> Result<()> {
         let running = self.session().is_some_and(|s| s.id == id);
         if !running && !self.store.has_session(id)? {
             return Err(Error::UnknownConstellation);
         }
-        self.store.name_constellation(id, cleaned_name(name).as_deref())
+        self.store.name_constellation(id, cleaned_name(name).as_deref(), now)
     }
 
     /// The night sky's secret and when it last showed new things. The first time, it makes a new
@@ -1148,6 +1175,36 @@ mod tests {
     }
 
     #[test]
+    fn passes_used_on_other_devices_count_here() {
+        use crate::records::SyncedSession;
+
+        let mut engine = engine();
+        assert_eq!(engine.passes_left(60 * MIN), 2);
+        let session = SessionRecord {
+            id: "elsewhere".into(),
+            profile_id: "deep-work".into(),
+            profile_name: "Deep Work".into(),
+            started_at: 0,
+            ended_at: 30 * MIN,
+            timer_minutes: Some(60),
+            focused_ms: 30 * MIN,
+            overtime_ms: 0,
+            idle_tail_ms: 0,
+            end_reason: EndReason::EmergencyPass,
+            broken: false,
+            goal: None,
+            goal_met: None,
+        };
+        let records = [Record::Session(SyncedSession {
+            session,
+            updated_at: 30 * MIN,
+        })];
+        assert_eq!(engine.apply_records(&records).unwrap(), 1);
+        assert_eq!(engine.passes_left(60 * MIN), 1);
+        assert_eq!(engine.changed_records(0, 10).unwrap().0, vec![]);
+    }
+
+    #[test]
     fn starts_with_the_starter_profiles() {
         let engine = engine();
         assert_eq!(engine.profiles.updated_at, 0);
@@ -1329,8 +1386,8 @@ mod tests {
         assert!(log.contains(&real));
 
         let sample = log.iter().find(|s| s.id != real.id).unwrap();
-        engine.name_constellation(&sample.id, "Sample week").unwrap();
-        engine.name_constellation(&real.id, "Real week").unwrap();
+        engine.name_constellation(&sample.id, "Sample week", MIN).unwrap();
+        engine.name_constellation(&real.id, "Real week", MIN).unwrap();
 
         engine.remove_samples().unwrap();
         assert_eq!(engine.session_log().unwrap(), vec![real.clone()]);
@@ -1377,8 +1434,8 @@ mod tests {
             intention: None,
             continued,
         };
-        engine.record_gate_visit(visit("back", false)).unwrap();
-        engine.record_gate_visit(visit("went", true)).unwrap();
+        engine.record_gate_visit(visit("back", false), MIN).unwrap();
+        engine.record_gate_visit(visit("went", true), MIN).unwrap();
         let ids: Vec<_> = engine.turned_back().unwrap().into_iter().map(|v| v.id).collect();
         assert_eq!(ids, ["back"]);
     }
@@ -1389,7 +1446,9 @@ mod tests {
         engine.start_session("writing", 1_000).unwrap();
         let running = engine.session().unwrap().id.clone();
         // The week's first star can be the session that's still running.
-        engine.name_constellation(&running, "  The   Big\nDipper ").unwrap();
+        engine
+            .name_constellation(&running, "  The   Big\nDipper ", MIN)
+            .unwrap();
         engine.end_session(1_000 + 50 * MIN, EndReason::Stopped).unwrap();
         let named = |engine: &Engine| {
             let names = engine.constellation_names().unwrap();
@@ -1398,13 +1457,13 @@ mod tests {
         assert_eq!(named(&engine), [(running.clone(), "The Big Dipper".to_owned())]);
 
         let long = "é".repeat(MAX_CONSTELLATION_NAME + 10);
-        engine.name_constellation(&running, &long).unwrap();
+        engine.name_constellation(&running, &long, MIN).unwrap();
         assert_eq!(named(&engine)[0].1.chars().count(), MAX_CONSTELLATION_NAME);
 
-        engine.name_constellation(&running, " \n ").unwrap();
+        engine.name_constellation(&running, " \n ", MIN).unwrap();
         assert_eq!(named(&engine), []);
         assert!(matches!(
-            engine.name_constellation("nope", "Orion"),
+            engine.name_constellation("nope", "Orion", MIN),
             Err(Error::UnknownConstellation)
         ));
     }
@@ -1616,13 +1675,13 @@ mod tests {
         let visit = |id: &str, at: i64| -> GateVisit {
             serde_json::from_value(serde_json::json!({ "id": id, "recipeId": "reddit", "at": at })).unwrap()
         };
-        engine.record_gate_visit(visit("before", 10)).unwrap();
+        engine.record_gate_visit(visit("before", 10), MIN).unwrap();
         let session_id = engine.start_session("writing", 1_000).unwrap().id.clone();
-        engine.record_gate_visit(visit("during", 2_000)).unwrap();
+        engine.record_gate_visit(visit("during", 2_000), MIN).unwrap();
         let mut answered = visit("during", 2_000);
         answered.why = Some("bored".into());
         answered.continued = true;
-        engine.record_gate_visit(answered).unwrap();
+        engine.record_gate_visit(answered, MIN).unwrap();
 
         let visits = engine.store.gate_visits().unwrap();
         assert_eq!(visits.len(), 2);
@@ -2119,10 +2178,10 @@ mod tests {
         engine.start_session("writing", 10 * MIN).unwrap();
         engine.launch_satellite("last week", 11 * MIN).unwrap();
         engine.end_session(40 * MIN, EndReason::Stopped).unwrap();
-        engine.record_gate_visit(visit("last week", 41 * MIN)).unwrap();
+        engine.record_gate_visit(visit("last week", 41 * MIN), MIN).unwrap();
 
         engine.start_session("writing", 100 * MIN).unwrap();
-        engine.record_gate_visit(visit("this week", 110 * MIN)).unwrap();
+        engine.record_gate_visit(visit("this week", 110 * MIN), MIN).unwrap();
         engine.launch_satellite("this week", 120 * MIN).unwrap();
         engine.end_session(130 * MIN, EndReason::Stopped).unwrap();
         let id = satellite_id(&engine, "this week");
@@ -2156,15 +2215,18 @@ mod tests {
         engine.start_session("writing", MIN).unwrap();
         engine.set_session_goal("Draft the intro", MIN).unwrap();
         engine
-            .record_gate_visit(GateVisit {
-                id: "visit".into(),
-                recipe_id: "reddit".into(),
-                at: 2 * MIN,
-                destination: Some("page".into()),
-                why: Some("stuck".into()),
-                intention: None,
-                continued: false,
-            })
+            .record_gate_visit(
+                GateVisit {
+                    id: "visit".into(),
+                    recipe_id: "reddit".into(),
+                    at: 2 * MIN,
+                    destination: Some("page".into()),
+                    why: Some("stuck".into()),
+                    intention: None,
+                    continued: false,
+                },
+                MIN,
+            )
             .unwrap();
         engine.launch_satellite("reply to Sam", 3 * MIN).unwrap();
         let session = engine.session().unwrap().id.clone();
@@ -2172,7 +2234,7 @@ mod tests {
         engine.answer_goal(&session, true, 51 * MIN).unwrap();
         let id = satellite_id(&engine, "reply to Sam");
         engine.act_on_satellite(&id, SatelliteAction::Task, 52 * MIN).unwrap();
-        engine.name_constellation(&session, "Orion").unwrap();
+        engine.name_constellation(&session, "Orion", MIN).unwrap();
         engine.add_own_quote("Ship it.", "Me", 53 * MIN).unwrap();
         let settings = Settings {
             passes_per_week: 5,
