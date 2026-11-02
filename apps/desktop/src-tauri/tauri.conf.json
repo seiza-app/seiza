@@ -35,7 +35,7 @@
   "plugins": {
     "updater": {
       "endpoints": ["https://github.com/seiza-app/seiza/releases/latest/download/latest.json"],
-      "pubkey": "",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJDOTA4QjVDMjM0RTUyNkYKUldSdlVrNGpYSXVRTE1QeGhUSGkzUFc4RFJyMGFQM0NkS2QwMitPNFl3aXQvYTg3MWliMlkxa1EK",
       "requireSignedVersion": true
     }
   }
