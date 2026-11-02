@@ -9,6 +9,7 @@ import {
   timerStatus,
   type Profile,
   type SiteRecipe,
+  sessionProfile,
 } from '@lock-in/core';
 import { recipes } from '@lock-in/recipes';
 import { computed, onUnmounted, ref } from 'vue';
@@ -21,7 +22,7 @@ const profileList = useStorageItem(profiles);
 const linked = useStorageItem(desktopLinked);
 const offeredTour = useStorageItem(tourOffered);
 
-const activeProfile = computed(() => profileList.value?.find((p) => p.id === session.value?.profileId));
+const activeProfile = computed(() => sessionProfile(profileList.value ?? [], session.value));
 
 // activeTab lets the popup read the current tab's URL when the user opens it. Any site on the
 // web can be set here: a built-in one, one already added to a profile, or one to add.

@@ -6,6 +6,7 @@ import {
   isLooser,
   ownSiteDomain,
   resolveToggles,
+  sessionProfile,
   siteLevels,
   siteSettingsFor,
   type Profile,
@@ -43,7 +44,7 @@ watch(
 );
 
 const profile = computed(() =>
-  props.profiles.find((p) => p.id === (props.session ? props.session.profileId : editingId.value)),
+  props.session ? sessionProfile(props.profiles, props.session) : props.profiles.find((p) => p.id === editingId.value),
 );
 const rule = computed(() => findRule(profile.value, props.recipe.id));
 const pageRule = computed(() => findPathRule(rule.value?.paths, props.path));

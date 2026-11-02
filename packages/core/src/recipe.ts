@@ -1,5 +1,6 @@
 import { matchesPattern, parseHttpUrl } from './match';
 import { levelFor } from './paths';
+import { sessionProfile } from './profiles';
 import type { HiddenPart, Profile, Session, SiteRecipe, SiteRule, SiteSettings } from './types';
 
 /**
@@ -90,7 +91,7 @@ export function cssForPage(options: {
   if (!session) {
     return settings?.allTheTime ? buildRecipeCss(recipe, allTheTimeToggles(recipe, settings), settings.hidden) : '';
   }
-  const profile = profiles.find((p) => p.id === session.profileId);
+  const profile = sessionProfile(profiles, session);
   const pathname = parseHttpUrl(String(url))?.pathname;
   if (!profile || levelFor(profile, recipe.id, pathname) !== 'tamed') return '';
 

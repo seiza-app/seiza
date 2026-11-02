@@ -10,6 +10,7 @@ import {
   maxHiddenParts,
   pagePathAttribute,
   resolveToggles,
+  sessionProfile,
   siteAccess,
   siteRecipes,
   siteSettingsFor,
@@ -79,7 +80,7 @@ export default defineContentScript({
       const list = (values: Record<string, boolean>) =>
         recipe.toggles.map((toggle) => ({ id: toggle.id, label: toggle.label, on: values[toggle.id] ?? false }));
       if (session) {
-        const profile = profileList.find((p) => p.id === session!.profileId);
+        const profile = sessionProfile(profileList, session);
         if (levelFor(profile, recipe.id, url.pathname) !== 'tamed') return undefined;
         const values = resolveToggles(recipe, findRule(profile, recipe.id), session.overrides?.[recipe.id]);
         return { when: 'this session', list: list(values) };

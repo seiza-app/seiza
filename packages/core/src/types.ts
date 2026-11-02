@@ -136,6 +136,12 @@ export interface Session {
   startedAt: number;
   /** The quiet timer, copied from the profile when the desktop app starts or picks up the session. */
   timer?: TimerSettings;
+  /**
+   * A copy of its profile, taken when it started, whose rules it runs by. Changes made on this
+   * computer reach it too; ones the desktop app syncs from other computers don't. Missing from
+   * sessions started before there was a copy, which use their profile (`sessionProfile`).
+   */
+  rules?: Profile;
   /** Toggles changed for this session only. They don't touch the profile unless saved. */
   overrides?: ToggleOverrides;
   /** Redirected sites the user chose to continue to, keyed by recipe id. Each value is when the pass ends (epoch ms). */

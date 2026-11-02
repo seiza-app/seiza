@@ -1,5 +1,8 @@
 import { maxPathRules, normalizePath } from './paths';
+import { sessionProfile } from './profiles';
+import { sitesLooser } from './sites';
 import { isStarColor, newStarColor } from './sky';
+import { endLock } from './timer';
 import type { Profile, RedirectSettings, Session, SiteLevel, SiteRecipe, SiteRule } from './types';
 
 // Pure, immutable edits to profiles and sessions. The extension (and later the desktop
@@ -63,18 +66,29 @@ export function withSessionOverridesSaved(
   session: Session,
   recipeId: string,
 ): { profiles: Profile[]; session: Session } {
-  const rule = findRule(
-    profiles.find((p) => p.id === session.profileId),
-    recipeId,
-  );
+  const rule = findRule(sessionProfile(profiles, session), recipeId);
   const overrides = session.overrides?.[recipeId];
   if (!rule || !overrides) return { profiles: [...profiles], session };
 
-  const saved = Object.entries(overrides).reduce(
-    (list, [toggleId, value]) => withProfileToggle(list, session.profileId, recipeId, toggleId, value),
-    [...profiles],
-  );
-  return { profiles: saved, session: withRecipeOverrides(session, recipeId, {}) };
+  const save = (list: Profile[]) =>
+    Object.entries(overrides).reduce(
+      (saved, [toggleId, value]) => withProfileToggle(saved, session.profileId, recipeId, toggleId, value),
+      list,
+    );
+  const withRules = session.rules ? { ...session, rules: save([session.rules])[0] } : session;
+  return { profiles: save([...profiles]), session: withRecipeOverrides(withRules, recipeId, {}) };
+}
+
+/**
+ * Makes an edit to the list of profiles in the running session's copy of its profile too, so a
+ * change made here applies straight away. While the session is Hard, one that loosens its
+ * sites is left out of the copy, as the desktop app does.
+ */
+export function withRulesEdited(session: Session, edit: (list: Profile[]) => Profile[], now: number): Session {
+  const rules = session.rules && edit([session.rules]).find((p) => p.id === session.profileId);
+  if (!session.rules || !rules || rules === session.rules) return session;
+  if (endLock(session, now) === 'hard' && sitesLooser(session.rules.sites, rules.sites)) return session;
+  return { ...session, rules };
 }
 
 /** Replaces one site's session overrides, dropping empty maps so the session stays tidy. */
