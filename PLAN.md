@@ -432,7 +432,7 @@ Today the extension updates itself through the stores, but updating the app mean
   4. **Settings › Sync:** Use your own server, Start a new sync group, Join with a pairing code, Add a device, the device list with Remove, Last synced, Leave sync and Move to another server, and joining with one sky.
   5. **Sending and fetching** at the moments above, with the Sky, streaks, today's time and the weekly report counting every device.
   6. **Before release:** `PRIVACY.md`'s Network section, the website's sync note (Phase 6, §9), and every new dependency at least two weeks old.
-  7. **Profiles:** an `updated_at` on each profile, deleted ones kept as deleted, settings left per computer.
+  7. ✅ **Profiles** (`records.rs`, a fourth kind of record, `profile`): an `updated_at` on each profile, deleted ones kept as deleted (with their last copy, so their stars keep their color and a session running on one keeps its name), settings left per computer. The ordered list the app and the extension use stays as it was; sync keeps its own copy of each profile beside it, notes every change made here (in the app, by the extension, or from a backup), and folds in other devices' changes: edits in place, deletions out, new ones on the end, newer than the extension's list so it takes them on too.
   8. **Live sessions:** the server's quiet connection, one session across computers (ending, shared passes, idle, joining on wake), the copy of the rules a session carries, and the follow switch.
   9. **Later:** satellites; a hosted tier maybe, after the outside review.
 

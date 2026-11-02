@@ -9,7 +9,7 @@ use crate::engine::ConstellationName;
 use crate::error::Result;
 use crate::records::{self, Record};
 use crate::satellites::{Satellite, SatelliteRecord, SatelliteState};
-use crate::session::{EndReason, GateVisit, SessionRecord};
+use crate::session::{EndReason, GateVisit, Profile, SessionRecord};
 
 /// A value that's kept in step with the extension, with when it last changed. The newest
 /// change wins.
@@ -135,6 +135,25 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     DROP TABLE constellation_names;
     ALTER TABLE names RENAME TO constellation_names;
     CREATE INDEX constellation_names_change_seq ON constellation_names (change_seq);
+"#,
+    // Each profile on its own for sync (records.rs), next to the whole list the extension gets,
+    // which stays in `state`. A deleted profile stays, marked deleted, so the deletion can sync
+    // and its stars keep their color.
+    r#"
+    CREATE TABLE profiles (
+        id TEXT PRIMARY KEY,
+        profile TEXT NOT NULL,
+        deleted INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL DEFAULT 0,
+        change_seq INTEGER NOT NULL DEFAULT 0
+    );
+    INSERT OR IGNORE INTO profiles (id, profile, updated_at)
+    SELECT json_extract(each.value, '$.id'), each.value, (SELECT updated_at FROM state WHERE key = 'profiles')
+    FROM json_each((SELECT value FROM state WHERE key = 'profiles' AND json_valid(value))) AS each
+    WHERE each.type = 'object' AND json_type(each.value, '$.id') = 'text';
+    UPDATE profiles SET change_seq = rowid + (SELECT last FROM change_counter);
+    UPDATE change_counter SET last = last + (SELECT COALESCE(MAX(rowid), 0) FROM profiles);
+    CREATE INDEX profiles_change_seq ON profiles (change_seq);
 "#,
 ];
 
@@ -578,6 +597,33 @@ impl Store {
         }
         tx.commit()?;
         Ok(report)
+    }
+
+    /// Saves the whole list of profiles under `key`, and notes each one that changed from
+    /// `before` for sync, all in one go.
+    pub fn save_profiles(
+        &mut self,
+        key: &str,
+        profiles: &Synced<Vec<Profile>>,
+        before: &[Profile],
+        now: i64,
+    ) -> Result<()> {
+        let tx = self.db.transaction()?;
+        save(&tx, key, profiles)?;
+        records::note_profile_changes(&tx, before, &profiles.value, now)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Notes each profile that changed from `before` to `after` for sync.
+    pub fn note_profile_changes(&self, before: &[Profile], after: &[Profile], now: i64) -> Result<()> {
+        records::note_profile_changes(&self.db, before, after, now)
+    }
+
+    /// Every profile sync knows of, in the order they were first saved, and whether each one
+    /// has been deleted.
+    pub fn known_profiles(&self) -> Result<Vec<(Profile, bool)>> {
+        records::known_profiles(&self.db)
     }
 
     /// Records changed here since `cursor`, for sync (records.rs).

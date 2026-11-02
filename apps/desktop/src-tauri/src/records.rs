@@ -1,13 +1,16 @@
 //! The records that sync between devices (PLAN §8 Sync): finished sessions, trips to redirected
-//! sites and constellation names. This is only what goes in and out of the database; sync itself
+//! sites, constellation names and profiles. This is only what goes in and out of the database; sync itself
 //! wraps them up, encrypts them and sends them on.
 //!
 //! Every record carries `updated_at`, when it last changed (epoch ms), and the newest one wins.
 //! Each change made here also takes the next number from a counter (`change_seq`), so sync can
 //! ask for everything changed since the last number it sent, whatever the clocks say. Records
 //! from other devices are saved with their own `updated_at` and number 0, so they aren't sent
-//! back. Nothing is deleted: a cleared constellation name stays, with no name. Sample data
-//! (samples.rs) never leaves this device.
+//! back. Nothing is deleted: a cleared constellation name stays, with no name, and a deleted
+//! profile stays, marked deleted. Sample data (samples.rs) never leaves this device.
+//!
+//! Profiles are also kept as one list in `state`, in the order the extension shows them, which
+//! is what the app and the extension use. The `profiles` table here is sync's copy of each one.
 
 use std::cmp::Ordering;
 
@@ -16,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 use crate::samples::SAMPLE_PREFIX;
-use crate::session::{EndReason, GateVisit, SessionRecord};
+use crate::session::{EndReason, GateVisit, Profile, SessionRecord};
 use crate::store::insert_session;
 
 /// One record, as it travels between devices: `{"kind": "session", "id": …, "updatedAt": …}`.
@@ -26,6 +29,7 @@ pub enum Record {
     Session(SyncedSession),
     Trip(SyncedTrip),
     ConstellationName(SyncedName),
+    Profile(SyncedProfile),
 }
 
 /// A finished session from the log.
@@ -56,12 +60,25 @@ pub struct SyncedName {
     pub updated_at: i64,
 }
 
+/// A profile, kept whole under `profile` so its own fields can never clash with these. A
+/// deleted one keeps its last copy, for its stars' color.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncedProfile {
+    pub id: String,
+    pub profile: Profile,
+    #[serde(default)]
+    pub deleted: bool,
+    pub updated_at: i64,
+}
+
 impl Record {
     pub fn id(&self) -> &str {
         match self {
             Record::Session(s) => &s.session.id,
             Record::Trip(t) => &t.visit.id,
             Record::ConstellationName(n) => &n.id,
+            Record::Profile(p) => &p.id,
         }
     }
 
@@ -70,6 +87,7 @@ impl Record {
             Record::Session(s) => s.updated_at,
             Record::Trip(t) => t.updated_at,
             Record::ConstellationName(n) => n.updated_at,
+            Record::Profile(p) => p.updated_at,
         }
     }
 
@@ -92,8 +110,13 @@ impl Record {
         }
     }
 
-    fn is_sample(&self) -> bool {
-        self.id().starts_with(SAMPLE_PREFIX)
+    /// Whether this can be saved here: not sample data, and a profile whose id is its own.
+    fn can_apply(&self) -> bool {
+        let consistent = match self {
+            Record::Profile(p) => p.profile.id == p.id,
+            _ => true,
+        };
+        consistent && !self.id().starts_with(SAMPLE_PREFIX)
     }
 }
 
@@ -116,6 +139,7 @@ const SESSION_COLUMNS: &str = "id, profile_id, profile_name, started_at, ended_a
 const TRIP_COLUMNS: &str =
     "id, recipe_id, at, destination, why, intention, continued, session_id, updated_at, change_seq";
 const NAME_COLUMNS: &str = "id, name, updated_at, change_seq";
+const PROFILE_COLUMNS: &str = "id, profile, deleted, updated_at, change_seq";
 
 fn session_row(row: &Row) -> rusqlite::Result<(Record, i64)> {
     let session = SessionRecord {
@@ -167,14 +191,28 @@ fn name_row(row: &Row) -> rusqlite::Result<(Record, i64)> {
     Ok((record, row.get(3)?))
 }
 
+fn profile_row(row: &Row) -> rusqlite::Result<(Record, i64)> {
+    let json: String = row.get(1)?;
+    let profile = serde_json::from_str(&json)
+        .map_err(|error| rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(error)))?;
+    let record = Record::Profile(SyncedProfile {
+        id: row.get(0)?,
+        profile,
+        deleted: row.get(2)?,
+        updated_at: row.get(3)?,
+    });
+    Ok((record, row.get(4)?))
+}
+
 /// Reads a row as a record and its number from the counter of changes made here.
 type ReadRow = fn(&Row) -> rusqlite::Result<(Record, i64)>;
 
 /// Each kind of record: its table, its columns and how to read a row of them.
-const TABLES: [(&str, &str, ReadRow); 3] = [
+const TABLES: [(&str, &str, ReadRow); 4] = [
     ("sessions", SESSION_COLUMNS, session_row),
     ("gate_visits", TRIP_COLUMNS, trip_row),
     ("constellation_names", NAME_COLUMNS, name_row),
+    ("profiles", PROFILE_COLUMNS, profile_row),
 ];
 
 /// Up to `limit` records changed here after `cursor`, in the order they changed, and the
@@ -208,11 +246,12 @@ pub fn changed_since(db: &Connection, cursor: i64, limit: usize) -> Result<(Vec<
 pub fn apply(db: &mut Connection, records: &[Record]) -> Result<usize> {
     let tx = db.transaction()?;
     let mut applied = 0;
-    for record in records.iter().filter(|r| !r.is_sample()) {
+    for record in records.iter().filter(|r| r.can_apply()) {
         let index = match record {
             Record::Session(_) => 0,
             Record::Trip(_) => 1,
             Record::ConstellationName(_) => 2,
+            Record::Profile(_) => 3,
         };
         let (table, columns, read) = TABLES[index];
         let here = tx
@@ -261,8 +300,57 @@ fn save(db: &Connection, record: &Record) -> Result<()> {
                 params![n.id, n.name, n.updated_at],
             )?;
         }
+        Record::Profile(p) => {
+            db.execute(
+                &format!("INSERT OR REPLACE INTO profiles ({PROFILE_COLUMNS}) VALUES (?1, ?2, ?3, ?4, 0)"),
+                params![p.id, serde_json::to_string(&p.profile)?, p.deleted, p.updated_at],
+            )?;
+        }
     }
     Ok(())
+}
+
+/// Notes each profile that changed between two versions of the list, as changes made here: new
+/// and edited ones, and deleted ones, which keep their last copy.
+pub fn note_profile_changes(db: &Connection, before: &[Profile], after: &[Profile], now: i64) -> Result<()> {
+    let changed = after
+        .iter()
+        .filter(|p| before.iter().find(|b| b.id == p.id) != Some(*p))
+        .map(|p| (p, false));
+    let deleted = before
+        .iter()
+        .filter(|b| !after.iter().any(|p| p.id == b.id))
+        .map(|b| (b, true));
+    for (profile, deleted) in changed.chain(deleted) {
+        db.execute(
+            "INSERT INTO profiles (id, profile, deleted, updated_at, change_seq) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT (id) DO UPDATE SET profile = excluded.profile, deleted = excluded.deleted,
+                updated_at = MAX(excluded.updated_at, profiles.updated_at + 1), change_seq = excluded.change_seq
+             WHERE profiles.profile IS NOT excluded.profile OR profiles.deleted IS NOT excluded.deleted",
+            params![
+                profile.id,
+                serde_json::to_string(profile)?,
+                deleted,
+                now,
+                next_change(db)?
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+/// Every profile sync knows of, in the order they were first saved here, and whether each one
+/// has been deleted.
+pub fn known_profiles(db: &Connection) -> Result<Vec<(Profile, bool)>> {
+    let mut statement = db.prepare(&format!("SELECT {PROFILE_COLUMNS} FROM profiles ORDER BY rowid"))?;
+    let rows = statement.query_map([], profile_row)?;
+    let mut known = vec![];
+    for row in rows {
+        if let (Record::Profile(p), _) = row? {
+            known.push((p.profile, p.deleted));
+        }
+    }
+    Ok(known)
 }
 
 /// Numbers every record as changed here again, from other devices too, so the next
@@ -552,5 +640,106 @@ mod tests {
         log(&mut store, &session("s2", 60 * MIN));
         let (changed, _) = store.changed_since(3, 100).unwrap();
         assert_eq!(changed.len(), 2);
+    }
+
+    fn profile(id: &str, name: &str) -> Profile {
+        serde_json::from_value(serde_json::json!({ "id": id, "name": name, "sites": [{ "domain": "reddit.com" }] }))
+            .unwrap()
+    }
+
+    #[test]
+    fn a_profile_travels_whole_under_its_own_key() {
+        let record = Record::Profile(SyncedProfile {
+            id: "p".into(),
+            profile: profile("p", "Deep Work"),
+            deleted: true,
+            updated_at: 7,
+        });
+        let json = serde_json::to_value(&record).unwrap();
+        assert_eq!(json["kind"], "profile");
+        assert_eq!(json["id"], "p");
+        assert_eq!(json["deleted"], true);
+        assert_eq!(json["updatedAt"], 7);
+        assert_eq!(json["profile"]["name"], "Deep Work");
+        assert_eq!(json["profile"]["sites"][0]["domain"], "reddit.com");
+        assert_eq!(serde_json::from_value::<Record>(json).unwrap(), record);
+    }
+
+    #[test]
+    fn notes_new_edited_and_deleted_profiles() {
+        let store = Store::open_in_memory().unwrap();
+        let (a, b) = (profile("a", "A"), profile("b", "B"));
+        store.note_profile_changes(&[], &[a.clone(), b.clone()], 10).unwrap();
+        let (_, cursor) = store.changed_since(0, 100).unwrap();
+
+        // Saving the same list again changes nothing; an edit and a deletion do.
+        store
+            .note_profile_changes(&[a.clone(), b.clone()], &[a.clone(), b.clone()], 20)
+            .unwrap();
+        assert_eq!(store.changed_since(cursor, 100).unwrap().0, vec![]);
+        let renamed = profile("a", "A2");
+        store
+            .note_profile_changes(&[a, b.clone()], std::slice::from_ref(&renamed), 30)
+            .unwrap();
+        let changed = store.changed_since(cursor, 100).unwrap().0;
+        assert_eq!(
+            changed,
+            [
+                Record::Profile(SyncedProfile {
+                    id: "a".into(),
+                    profile: renamed,
+                    deleted: false,
+                    updated_at: 30
+                }),
+                Record::Profile(SyncedProfile {
+                    id: "b".into(),
+                    profile: b,
+                    deleted: true,
+                    updated_at: 30
+                }),
+            ]
+        );
+        let known: Vec<_> = store
+            .known_profiles()
+            .unwrap()
+            .into_iter()
+            .map(|(p, d)| (p.name, d))
+            .collect();
+        assert_eq!(known, [("A2".to_string(), false), ("B".to_string(), true)]);
+    }
+
+    #[test]
+    fn a_profile_must_carry_its_own_id() {
+        let mut store = Store::open_in_memory().unwrap();
+        let mismatched = Record::Profile(SyncedProfile {
+            id: "a".into(),
+            profile: profile("b", "B"),
+            deleted: false,
+            updated_at: 1,
+        });
+        assert_eq!(store.apply(&[mismatched]).unwrap(), 0);
+        assert_eq!(store.known_profiles().unwrap(), vec![]);
+    }
+
+    #[test]
+    fn saved_profiles_are_ready_to_send() {
+        use crate::store::MIGRATIONS;
+
+        let db = Connection::open_in_memory().unwrap();
+        for migration in &MIGRATIONS[..8] {
+            db.execute_batch(migration).unwrap();
+        }
+        db.pragma_update(None, "user_version", 8).unwrap();
+        db.execute(
+            "INSERT INTO state (key, value, updated_at) VALUES ('profiles', ?1, 42)",
+            params![r#"[{"id":"a","name":"A","sites":[]},{"name":"no id"},7,{"id":"b","name":"B","sites":[]}]"#],
+        )
+        .unwrap();
+        let store = Store::migrated_for_tests(db);
+        let sent: Vec<_> = everything(&store)
+            .iter()
+            .map(|r| (r.id().to_owned(), r.updated_at()))
+            .collect();
+        assert_eq!(sent, [("a".to_string(), 42), ("b".to_string(), 42)]);
     }
 }

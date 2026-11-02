@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -36,6 +38,9 @@ const PASS_WEEK_MS: i64 = 7 * 24 * 60 * 60_000;
 pub struct Engine {
     store: Store,
     profiles: Synced<Vec<Profile>>,
+    /// Profiles that were deleted, as they last were, so their stars keep their color and a
+    /// session running on one keeps its name.
+    deleted_profiles: Vec<Profile>,
     session: Synced<Option<Session>>,
     settings: Settings,
     /// When each emergency pass was used (epoch ms).
@@ -64,6 +69,8 @@ pub struct Engine {
 #[ts(export)]
 pub struct Snapshot {
     pub profiles: Vec<ProfileSummary>,
+    /// The star color each deleted profile had, if it had one picked, so its stars keep it.
+    pub deleted_star_colors: BTreeMap<String, String>,
     pub session: Option<ActiveSession>,
     pub settings: Settings,
     /// Emergency passes left for the last 7 days.
@@ -192,9 +199,11 @@ impl Engine {
             value: vec![],
             updated_at: 0,
         });
+        let deleted_profiles = deleted_profiles(&store)?;
         Ok(Self {
             store,
             profiles,
+            deleted_profiles,
             session,
             settings,
             pass_uses,
@@ -257,6 +266,11 @@ impl Engine {
                     plan: p.plan(),
                 })
                 .collect(),
+            deleted_star_colors: self
+                .deleted_profiles
+                .iter()
+                .filter_map(|p| Some((p.id.clone(), p.star_color()?)))
+                .collect(),
             session: self.session().map(|s| ActiveSession {
                 id: s.id.clone(),
                 profile_id: s.profile_id.clone(),
@@ -286,8 +300,10 @@ impl Engine {
         }
     }
 
+    /// A profile's name, or the last one it had if it's been deleted.
     pub fn profile_name(&self, id: &str) -> String {
         self.profile(id)
+            .or_else(|| self.deleted_profiles.iter().find(|p| p.id == id))
             .map_or_else(|| "Unknown profile".into(), |p| p.name.clone())
     }
 
@@ -428,6 +444,19 @@ impl Engine {
         Ok(())
     }
 
+    /// Saves a new version of the list of profiles made here, and notes what changed for sync.
+    fn save_profiles(&mut self, profiles: Synced<Vec<Profile>>, now: i64) -> Result<()> {
+        let ids = |list: &[Profile]| list.iter().map(|p| p.id.clone()).collect::<Vec<_>>();
+        let added_or_deleted = ids(&self.profiles.value) != ids(&profiles.value);
+        self.store
+            .save_profiles(PROFILES, &profiles, &self.profiles.value, now)?;
+        self.profiles = profiles;
+        if added_or_deleted {
+            self.deleted_profiles = deleted_profiles(&self.store)?;
+        }
+        Ok(())
+    }
+
     /// Changes the apps a profile closes or hides. While one of its Hard sessions is running,
     /// they can only get stricter.
     pub fn set_profile_apps(&mut self, profile_id: &str, apps: Vec<AppRule>, now: i64) -> Result<()> {
@@ -444,13 +473,13 @@ impl Engine {
             return Err(Error::Locked);
         }
         profile.set_apps(&apps);
-        let synced = Synced {
-            value: profiles,
-            updated_at: now,
-        };
-        self.store.save(PROFILES, &synced)?;
-        self.profiles = synced;
-        Ok(())
+        self.save_profiles(
+            Synced {
+                value: profiles,
+                updated_at: now,
+            },
+            now,
+        )
     }
 
     /// Changes how a profile treats sites. While one of its Hard sessions is running, they can
@@ -468,13 +497,13 @@ impl Engine {
             return Err(Error::Locked);
         }
         profile.set_sites(&sites);
-        let synced = Synced {
-            value: profiles,
-            updated_at: now,
-        };
-        self.store.save(PROFILES, &synced)?;
-        self.profiles = synced;
-        Ok(())
+        self.save_profiles(
+            Synced {
+                value: profiles,
+                updated_at: now,
+            },
+            now,
+        )
     }
 
     /// Changes a profile's timer, for every future session that uses it.
@@ -485,13 +514,13 @@ impl Engine {
             .find(|p| p.id == profile_id)
             .ok_or(Error::UnknownProfile)?;
         profile.set_timer(&timer.clamped());
-        let synced = Synced {
-            value: profiles,
-            updated_at: now,
-        };
-        self.store.save(PROFILES, &synced)?;
-        self.profiles = synced;
-        Ok(())
+        self.save_profiles(
+            Synced {
+                value: profiles,
+                updated_at: now,
+            },
+            now,
+        )
     }
 
     /// Sets the color of a profile's stars, a hex color like "#f5c86b".
@@ -505,13 +534,13 @@ impl Engine {
             .find(|p| p.id == profile_id)
             .ok_or(Error::UnknownProfile)?;
         profile.set_star_color(color);
-        let synced = Synced {
-            value: profiles,
-            updated_at: now,
-        };
-        self.store.save(PROFILES, &synced)?;
-        self.profiles = synced;
-        Ok(())
+        self.save_profiles(
+            Synced {
+                value: profiles,
+                updated_at: now,
+            },
+            now,
+        )
     }
 
     /// Changes the if-then plan a profile's redirect page shows (PLAN §3). It can't loosen a
@@ -523,13 +552,13 @@ impl Engine {
             .find(|p| p.id == profile_id)
             .ok_or(Error::UnknownProfile)?;
         profile.set_plan(plan);
-        let synced = Synced {
-            value: profiles,
-            updated_at: now,
-        };
-        self.store.save(PROFILES, &synced)?;
-        self.profiles = synced;
-        Ok(())
+        self.save_profiles(
+            Synced {
+                value: profiles,
+                updated_at: now,
+            },
+            now,
+        )
     }
 
     /// Turns asking for a goal at the start of a profile's sessions on or off.
@@ -540,13 +569,13 @@ impl Engine {
             .find(|p| p.id == profile_id)
             .ok_or(Error::UnknownProfile)?;
         profile.set_asks_goal(on);
-        let synced = Synced {
-            value: profiles,
-            updated_at: now,
-        };
-        self.store.save(PROFILES, &synced)?;
-        self.profiles = synced;
-        Ok(())
+        self.save_profiles(
+            Synced {
+                value: profiles,
+                updated_at: now,
+            },
+            now,
+        )
     }
 
     /// Sets the running session's goal. An empty one clears it.
@@ -659,8 +688,7 @@ impl Engine {
         // Nothing can come from the future; a clock that ran ahead mustn't freeze the app's state.
         if let Some(mut incoming) = profiles.filter(|p| p.updated_at.min(now) > self.profiles.updated_at) {
             incoming.updated_at = incoming.updated_at.min(now);
-            self.store.save(PROFILES, &incoming)?;
-            self.profiles = incoming;
+            self.save_profiles(incoming, now)?;
             changed = true;
         }
 
@@ -800,12 +828,48 @@ impl Engine {
     /// Emergency passes used elsewhere count here too, since they're in the log. Returns how
     /// many changed something.
     #[allow(dead_code)]
-    pub fn apply_records(&mut self, records: &[Record]) -> Result<usize> {
+    pub fn apply_records(&mut self, records: &[Record], now: i64) -> Result<usize> {
         let applied = self.store.apply(records)?;
         if applied > 0 {
             self.pass_uses = self.store.pass_uses()?;
+            if records.iter().any(|r| matches!(r, Record::Profile(_))) {
+                self.take_synced_profiles(now)?;
+            }
         }
         Ok(applied)
+    }
+
+    /// Brings the list of profiles in line with sync's copy of each one: edited ones change in
+    /// place, deleted ones go, and new ones go on the end. Newer than the extension's list, so
+    /// it takes them on too. These aren't changes made here, so they aren't sent back.
+    fn take_synced_profiles(&mut self, now: i64) -> Result<()> {
+        let known = self.store.known_profiles()?;
+        let synced = |id: &str| known.iter().find(|(p, _)| p.id == id);
+        let mut profiles: Vec<Profile> = self
+            .profiles
+            .value
+            .iter()
+            .filter_map(|here| match synced(&here.id) {
+                Some((_, true)) => None,
+                Some((there, false)) => Some(there.clone()),
+                None => Some(here.clone()),
+            })
+            .collect();
+        for (there, deleted) in &known {
+            if !deleted && !profiles.iter().any(|p| p.id == there.id) {
+                profiles.push(there.clone());
+            }
+        }
+        self.deleted_profiles = deleted_profiles(&self.store)?;
+        if profiles != self.profiles.value {
+            let synced = Synced {
+                value: profiles,
+                updated_at: now.max(self.profiles.updated_at + 1),
+            };
+            self.store.save(PROFILES, &synced)?;
+            self.profiles = synced;
+        }
+        Ok(())
     }
 
     /// Marks every record to be sent again, for moving to another server or starting a new
@@ -987,6 +1051,8 @@ impl Engine {
         };
         if new_profiles + updated_profiles > 0 {
             state.push((PROFILES, json(&profiles)?));
+            self.store
+                .note_profile_changes(&self.profiles.value, &profiles.value, now)?;
         }
 
         let mut quotes = self.own_quotes.value.clone();
@@ -1163,6 +1229,15 @@ fn cleaned_name(text: &str) -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
+/// The profiles sync knows were deleted, as they last were.
+fn deleted_profiles(store: &Store) -> Result<Vec<Profile>> {
+    Ok(store
+        .known_profiles()?
+        .into_iter()
+        .filter_map(|(p, deleted)| deleted.then_some(p))
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1172,6 +1247,111 @@ mod tests {
 
     fn engine() -> Engine {
         Engine::load(Store::open_in_memory().unwrap(), 0).unwrap()
+    }
+
+    fn profile_record(id: &str, name: &str, deleted: bool, updated_at: i64) -> Record {
+        use crate::records::SyncedProfile;
+
+        let profile: Profile =
+            serde_json::from_value(serde_json::json!({ "id": id, "name": name, "sites": [], "starColor": "#9fe3c9" }))
+                .unwrap();
+        Record::Profile(SyncedProfile {
+            id: id.into(),
+            profile,
+            deleted,
+            updated_at,
+        })
+    }
+
+    fn profile_ids(engine: &Engine) -> Vec<String> {
+        engine.profiles.value.iter().map(|p| p.id.clone()).collect()
+    }
+
+    #[test]
+    fn profiles_changed_here_are_sent_one_by_one() {
+        let mut engine = engine();
+        let (_, cursor) = engine.changed_records(0, 100).unwrap();
+        engine.set_profile_star_color("writing", "#9FE3C9", MIN).unwrap();
+        let (changed, cursor) = engine.changed_records(cursor, 100).unwrap();
+        assert!(matches!(&changed[..], [Record::Profile(p)] if p.id == "writing" && !p.deleted && p.updated_at == MIN));
+
+        // The extension deleting one is sent as deleted, with its last copy.
+        let mut fewer = engine.profiles.value.clone();
+        fewer.retain(|p| p.id != "writing");
+        let incoming = Synced {
+            value: fewer,
+            updated_at: 2 * MIN,
+        };
+        assert!(engine.apply_remote(Some(incoming), None, 2 * MIN).unwrap());
+        let (changed, _) = engine.changed_records(cursor, 100).unwrap();
+        assert!(
+            matches!(&changed[..], [Record::Profile(p)] if p.id == "writing" && p.deleted
+            && p.profile.star_color().as_deref() == Some("#9fe3c9"))
+        );
+        assert_eq!(
+            engine
+                .snapshot(2 * MIN)
+                .deleted_star_colors
+                .get("writing")
+                .map(String::as_str),
+            Some("#9fe3c9")
+        );
+    }
+
+    #[test]
+    fn profiles_from_other_devices_join_the_list() {
+        let mut engine = engine();
+        let before = profile_ids(&engine);
+        let (_, cursor) = engine.changed_records(0, 100).unwrap();
+
+        // A new one goes on the end, newer than the extension's list so it takes it on too.
+        engine
+            .apply_records(&[profile_record("reading", "Reading", false, 5 * MIN)], 10 * MIN)
+            .unwrap();
+        assert_eq!(profile_ids(&engine), [before.clone(), vec!["reading".into()]].concat());
+        assert_eq!(engine.profiles.updated_at, 10 * MIN);
+        // It isn't sent back.
+        assert_eq!(engine.changed_records(cursor, 100).unwrap().0, vec![]);
+
+        // An edit changes it in place, and an older one changes nothing.
+        let first = before[0].clone();
+        engine
+            .apply_records(&[profile_record(&first, "Renamed", false, 6 * MIN)], 11 * MIN)
+            .unwrap();
+        assert_eq!(profile_ids(&engine)[0], first);
+        assert_eq!(engine.profile_name(&first), "Renamed");
+        assert_eq!(
+            engine
+                .apply_records(&[profile_record(&first, "Older", false, MIN)], 12 * MIN)
+                .unwrap(),
+            0
+        );
+
+        // Deleted elsewhere, it goes, but its stars keep its color and its name stays known.
+        engine
+            .apply_records(&[profile_record(&first, "Renamed", true, 7 * MIN)], 13 * MIN)
+            .unwrap();
+        assert!(!profile_ids(&engine).contains(&first));
+        assert_eq!(engine.profile_name(&first), "Renamed");
+        let snapshot = engine.snapshot(13 * MIN);
+        assert_eq!(
+            snapshot.deleted_star_colors.get(&first).map(String::as_str),
+            Some("#9fe3c9")
+        );
+        assert!(!snapshot.profiles.iter().any(|p| p.id == first));
+    }
+
+    #[test]
+    fn a_session_keeps_going_when_its_profile_is_deleted_elsewhere() {
+        let mut engine = engine();
+        let id = engine.start_session("deep-work", 0).unwrap().id.clone();
+        let name = engine.profile_name("deep-work");
+        engine
+            .apply_records(&[profile_record("deep-work", &name, true, MIN)], MIN)
+            .unwrap();
+        assert_eq!(engine.snapshot(2 * MIN).session.map(|s| s.id), Some(id));
+        let record = engine.end_session(30 * MIN, EndReason::Stopped).unwrap();
+        assert_eq!(record.profile_name, name);
     }
 
     #[test]
@@ -1199,7 +1379,7 @@ mod tests {
             session,
             updated_at: 30 * MIN,
         })];
-        assert_eq!(engine.apply_records(&records).unwrap(), 1);
+        assert_eq!(engine.apply_records(&records, 60 * MIN).unwrap(), 1);
         assert_eq!(engine.passes_left(60 * MIN), 1);
         assert_eq!(engine.changed_records(0, 10).unwrap().0, vec![]);
     }
