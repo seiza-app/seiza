@@ -1,0 +1,45 @@
+# Rules for the sync server's dependencies, checked by cargo-deny in CI (.github/workflows/sync-server.yml).
+# Locally: `cargo install cargo-deny --locked`, then `cargo deny check` in this folder.
+
+[graph]
+# Only the platforms the server runs on, so crates for other systems don't count.
+targets = [
+  "x86_64-unknown-linux-gnu",
+  "aarch64-unknown-linux-gnu",
+  # For running it while developing.
+  "aarch64-apple-darwin",
+  "x86_64-apple-darwin",
+]
+
+[advisories]
+# Any known security problem fails the check, and so does any crate that's no longer maintained.
+unmaintained = "all"
+ignore = []
+
+[licenses]
+# Licenses that can be shipped inside an AGPL-3.0 server. Anything else fails, to be looked at.
+allow = [
+  "0BSD",
+  "AGPL-3.0-only",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "CC0-1.0",
+  "ISC",
+  "MIT",
+  "MPL-2.0",
+  "Unicode-3.0",
+  "Zlib",
+]
+confidence-threshold = 0.9
+
+[bans]
+# A second copy of a crate is worth a look, but not worth failing on.
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+# Crates only from crates.io, never from a git repo or another registry.
+unknown-registry = "deny"
+unknown-git = "deny"

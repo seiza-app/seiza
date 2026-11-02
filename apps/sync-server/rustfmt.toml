@@ -1,0 +1,2 @@
+# Matches Prettier's printWidth for the TypeScript side.
+max_width = 120

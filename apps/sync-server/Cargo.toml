@@ -1,0 +1,27 @@
+[package]
+name = "seiza-sync"
+version = "0.1.0"
+description = "Seiza's self-hostable sync server: it keeps each sync group's encrypted data and can't read it"
+authors = ["SortelOne"]
+edition = "2024"
+license = "AGPL-3.0-only"
+repository = "https://github.com/seiza-app/seiza"
+
+[dependencies]
+# The HTTP server. Only the parts used here; WebSockets come with live sessions (PLAN §8, Sync).
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Encrypted data travels as base64 in JSON, and tokens are base64 too.
+base64 = "0.23"
+# Tokens and ids, from the system's secure random source.
+getrandom = "0.4"
+# The server keeps only a hash of each token, so a copy of its database can't sign in.
+sha2 = "0.11"
+
+[dev-dependencies]
+# Sending requests to the router in tests, without a network.
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

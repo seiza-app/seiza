@@ -355,7 +355,7 @@ lock-in/
     desktop/        # Tauri 2: src-tauri/ (Rust) + src/ (Vue 3 + Vite + TS)
     extension/      # WXT + Vue: background, content scripts, the redirect page, recipe live mode
     website/        # Night-sky themed product site (later; Nuxt static is fine here)
-    sync-server/    # Self-hostable Rust sync server (later)
+    sync-server/    # Self-hostable Rust sync server (one Docker image; see its README)
   packages/
     core/           # Shared TS types, JSON schemas, session/reward logic
     recipes/        # Built-in site recipes (JSON). Preview mocks live in the extension for now
@@ -400,10 +400,10 @@ Today the extension updates itself through the stores, but updating the app mean
 - **A hosted tier maybe later** (Obsidian Sync-style), decided once self-hosting has proven itself. If it comes, it's the same image and nothing is gated; paying only buys convenience. **AGPL fits this model:** anyone running a modified sync server for others must publish their changes, and as the copyright holder you can still run the hosted tier.
 - **Decided in planning (November 2026):**
   - **What syncs first:** the session log (with goals), trips to sites and constellation names, so every device draws the same stars, comets and weekly report: a session finished on the work computer shows up on the personal one, in its star, the streak, today's time and the report. Profiles and live sessions come straight after (below), and satellites after those.
-  - **Joining, with no account.** Settings › Sync › **Use your own server** takes the server's address, then **Start a new sync group** or **Join with a pairing code**. On a device already in the group, **Add a device** shows a short code (four words and a digit, e.g. `7-orbit-lantern-quiet`), single use and valid for 5 minutes. Once it's typed on the new device, the existing one asks "Add *MacBook Air*?" with **Add** and **Don't add**. Settings › Sync lists the devices with when each was last seen and a **Remove** on each, so a lost laptop can be removed from any other device. Each device has its own random token for the server.
+  - **Joining, with no account.** Settings › Sync › **Use your own server** takes the server's address, then **Start a new sync group** or **Join with a pairing code**. On a device already in the group, **Add a device** shows a short code (a number and four words, e.g. `4821-orbit-lantern-quiet-river`), single use and valid for 5 minutes. The number picks the pairing on the server; the words are the PAKE's secret and never leave the two devices. Once it's typed on the new device, the existing one asks "Add *MacBook Air*?" with **Add** and **Don't add**. Settings › Sync lists the devices with when each was last seen and a **Remove** on each, so a lost laptop can be removed from any other device. Each device has its own random token for the server.
   - **How the key reaches a new device.** The group has one key the server never sees. The two devices use the pairing code in a PAKE (SPAKE2, RustCrypto's `spake2` crate) through the server to agree on a one-off encrypted channel, and the key travels inside it, so the server can't learn it even though the code is short. To get right:
     - A maintained, reviewed crate for the PAKE, never our own; the rest is a standard AEAD (XChaCha20-Poly1305, with random nonces so two devices never reuse one) and a KDF.
-    - One guess per code: a failed attempt burns it on both sides, and it expires. That leaves anyone, the server's owner included, about a 1 in 10¹⁴ chance.
+    - One guess per code: a failed attempt burns it on both sides, and it expires. That leaves anyone, the server's owner included, about a 1 in 10¹³ chance.
     - Key confirmation: both sides prove they agree before anything is sent, or stop.
     - The group's id and a purpose (`seiza pairing v1`) go into the exchange, so it can't be replayed or moved to another group.
     - Tests against the crate's known vectors, and an outside review before any hosted tier.
@@ -427,8 +427,8 @@ Today the extension updates itself through the stores, but updating the app mean
   - **First run stays as it is for now** (offline, nothing asked). The first-run choice of offline, hosted or your own server comes with a hosted tier.
 - **Build order,** one PR each:
   1. **Sync-ready records in the app:** an `updated_at` on sessions, trips and constellation names (and cleared names), and the merge rules, with tests, before any network code.
-  2. **The server** in `apps/sync-server`: groups, devices and their tokens, each group's batches in order, the new-groups setting, size caps, rate limits, the protocol header and `stats`. A Docker image, and docs for running it (a Proxmox LXC behind a Cloudflare Tunnel as the example) and backing it up.
-  3. **Encryption and pairing:** the group key, encrypted batches, and the SPAKE2 pairing with the checks above.
+  2. ✅ **The server** in `apps/sync-server` (`seiza-sync`, axum + SQLite): groups, devices and their tokens (kept only as hashes), each group's batches in order, the new-groups setting, size caps, rate limits per address (by Cloudflare's `CF-Connecting-IP` when set), the protocol header, and the pairing relay for step 3 (opaque messages between the two devices, single use, 5 minutes, one new device per pairing, kept in memory). Commands: `stats`, `invite`, `backup` and `health`. A Docker image checked in CI, and its README covers running it (a Proxmox LXC behind a Cloudflare Tunnel as the example), backups and the API. The app doesn't use it yet.
+  3. **Encryption and pairing** in the app: the group key, encrypted batches, and the SPAKE2 pairing with the checks above, over the server's pairing relay.
   4. **Settings › Sync:** Use your own server, Start a new sync group, Join with a pairing code, Add a device, the device list with Remove, Last synced, Leave sync and Move to another server, and joining with one sky.
   5. **Sending and fetching** at the moments above, with the Sky, streaks, today's time and the weekly report counting every device.
   6. **Before release:** `PRIVACY.md`'s Network section, the website's sync note (Phase 6, §9), and every new dependency at least two weeks old.

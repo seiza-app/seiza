@@ -1,7 +1,7 @@
 # Opens pull requests that update dependencies. Each runs CI, so they come once a month as one
-# grouped PR per ecosystem (npm, cargo, GitHub Actions), majors included, to save Actions minutes.
-# The cooldown skips releases younger than two weeks, which gives a bad release time to be noticed
-# and pulled first. Security fixes don't wait for either.
+# grouped PR per ecosystem (npm, cargo, Docker, GitHub Actions), majors included, to save Actions
+# minutes. The cooldown skips releases younger than two weeks, which gives a bad release time to be
+# noticed and pulled first. Security fixes don't wait for either.
 version: 2
 updates:
   - package-ecosystem: npm
@@ -39,6 +39,29 @@ updates:
       # it uses, so the move is a change by hand (zbus::block_on), not a bump.
       - dependency-name: zbus
         update-types: [version-update:semver-major]
+
+  - package-ecosystem: cargo
+    directory: /apps/sync-server
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 14
+    open-pull-requests-limit: 2
+    groups:
+      sync-server:
+        patterns: ['*']
+
+  # The sync server's Docker base images.
+  - package-ecosystem: docker
+    directory: /apps/sync-server
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 14
+    open-pull-requests-limit: 2
+    groups:
+      docker:
+        patterns: ['*']
 
   - package-ecosystem: github-actions
     directory: /

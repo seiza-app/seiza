@@ -1,0 +1,88 @@
+name: Sync server
+
+# Only runs when the sync server (apps/sync-server) or this file changes.
+on:
+  push:
+    branches: [main]
+    paths:
+      - apps/sync-server/**
+      - .github/workflows/sync-server.yml
+  pull_request:
+    paths:
+      - apps/sync-server/**
+      - .github/workflows/sync-server.yml
+
+permissions:
+  contents: read
+
+# Actions are pinned to a commit, as in ci.yml.
+
+# A newer push to the same branch cancels the run it replaces, to save Actions minutes.
+concurrency:
+  group: sync-server-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Debug info makes the build slower and the cache bigger, and CI never needs it.
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    # A couple of minutes with the cache. GitHub's default limit is 6 hours, which a hung step
+    # would use up.
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/sync-server
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch
+        with:
+          components: rustfmt, clippy
+
+      # Only main saves the cache; pull requests start from main's.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: apps/sync-server
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+
+  # Known security problems, licenses that fit AGPL-3.0, and crates only from crates.io. The
+  # rules are in apps/sync-server/deny.toml.
+  deny:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          manifest-path: apps/sync-server/Cargo.toml
+
+  # The Docker image builds, starts and answers its health check. Nothing is pushed anywhere.
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/sync-server
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: docker build -t seiza-sync .
+      - run: |
+          docker run -d --name seiza-sync -p 8080:8080 seiza-sync
+          for attempt in $(seq 1 20); do
+            if curl -fs localhost:8080/health; then break; fi
+            [ "$attempt" = 20 ] && { docker logs seiza-sync; exit 1; }
+            sleep 1
+          done
+          curl -fs -H 'Seiza-Protocol: 1' -H 'Content-Type: application/json' \
+            -d '{"label":"Y2k="}' localhost:8080/v1/groups > /dev/null
+          docker exec seiza-sync seiza-sync stats
+          docker exec seiza-sync seiza-sync health
