@@ -28,6 +28,7 @@ import {
 import GlowPicker from './GlowPicker.vue';
 import HotkeyField from './HotkeyField.vue';
 import NumberField from './NumberField.vue';
+import SyncSettings from './SyncSettings.vue';
 import ToggleSwitch from './ToggleSwitch.vue';
 
 const props = defineProps<{
@@ -52,7 +53,8 @@ const emit = defineEmits<{
   imported: [];
   close: [];
 }>();
-// Sample data is for trying the app while developing it, so release builds don't offer it.
+// Sample data is for trying the app while developing it, so release builds don't offer it. Sync
+// stays in development builds too until it sends and fetches (PLAN §8, Sync, build steps 5–6).
 const development = import.meta.env.DEV;
 
 // The sections are numbered in order, like the weekly report's. Updates come first while a new
@@ -69,6 +71,7 @@ const sections = computed(() => [
   'quotes',
   'glow',
   'tour',
+  ...(development ? ['sync'] : []),
   'backup',
   ...(newVersion.value ? [] : ['updates']),
   ...(development ? ['sample'] : []),
@@ -433,6 +436,8 @@ const glowHelp = computed(() => {
         <p class="help">Five short steps: the sky, starting a session, profiles, satellites and your browser.</p>
       </div>
     </section>
+
+    <SyncSettings v-if="development" :number="numbered('sync')" />
 
     <section class="read" aria-labelledby="backup">
       <h2 id="backup" class="mono">{{ numbered('backup') }} — Backup</h2>

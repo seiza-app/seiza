@@ -24,8 +24,6 @@ mod session;
 mod settings;
 mod sites;
 mod store;
-// Not used until Settings › Sync (PLAN §8, Sync, step 4).
-#[allow(dead_code)]
 mod sync;
 mod timer;
 mod tray;
@@ -541,6 +539,7 @@ pub fn run() {
             app.manage(capture::CameFrom::default());
             app.manage(capture::Paused::default());
             app.manage(updates::Updates::default());
+            app.manage(sync::setup::Pairings::default());
 
             tray::create(app.handle(), &snapshot)?;
             capture::listen(app.handle());
@@ -635,6 +634,17 @@ pub fn run() {
             commands::add_sample_data,
             commands::remove_sample_data,
             commands::first_weekday,
+            commands::sync_status,
+            commands::sync_start_group,
+            commands::sync_join,
+            commands::sync_add_device,
+            commands::sync_answer_device,
+            commands::sync_pairing,
+            commands::sync_stop_pairing,
+            commands::sync_devices,
+            commands::sync_remove_device,
+            commands::sync_leave,
+            commands::sync_move_server,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Seiza")

@@ -3,8 +3,8 @@
 A small server you run yourself so Seiza can sync between your computers (PLAN.md §8, Sync). It's
 one Rust program with one SQLite file, in one Docker image.
 
-> **Not in use yet.** The app doesn't talk to it until later steps of the build order (encryption
-> and pairing, then Settings › Sync). This is the server side on its own.
+> **Not in use yet.** Settings › Sync can start a group and pair devices with it in development
+> builds, but the app doesn't send or fetch anything until the next step of the build order.
 
 ## What it can and can't see
 

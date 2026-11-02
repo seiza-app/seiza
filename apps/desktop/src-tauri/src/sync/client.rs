@@ -19,8 +19,8 @@ const PROTOCOL: (&str, &str) = ("Seiza-Protocol", "1");
 /// Why a request to the server didn't work.
 #[derive(Debug)]
 pub enum ClientError {
-    /// The server couldn't be reached, or took too long.
-    Offline(reqwest::Error),
+    /// The server couldn't be reached, or took too long. The cause is kept for debugging.
+    Offline(#[allow(dead_code)] reqwest::Error),
     /// The server turned the request away, with its reason.
     Refused { status: StatusCode, message: String },
     /// The answer wasn't what this version of the app expects.
@@ -78,6 +78,8 @@ pub struct Devices {
     pub you: String,
 }
 
+// Batches are sent and fetched from build step 5 on.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct Batch {
     pub seq: i64,
@@ -87,6 +89,7 @@ pub struct Batch {
     pub created_at: i64,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct Batches {
     pub batches: Vec<Batch>,
@@ -107,7 +110,6 @@ pub struct Pairing {
 pub struct Joined {
     /// The new device's key for the rest of the pairing, used like a token.
     pub joiner_key: String,
-    pub expires_at: i64,
 }
 
 #[derive(Debug)]
@@ -121,7 +123,7 @@ pub struct Inbox {
 #[derive(Clone)]
 pub struct Client {
     http: reqwest::Client,
-    base: String,
+    address: String,
 }
 
 impl Client {
@@ -141,18 +143,27 @@ impl Client {
             .map_err(ClientError::Offline)?;
         Ok(Self {
             http,
-            base: format!("{}/v1", address.trim_end_matches('/')),
+            address: address.trim_end_matches('/').to_owned(),
         })
     }
 
     fn request(&self, method: Method, path: &str, token: Option<&str>) -> RequestBuilder {
         let request = self
             .http
-            .request(method, format!("{}{path}", self.base))
+            .request(method, format!("{}/v1{path}", self.address))
             .header(PROTOCOL.0, PROTOCOL.1);
         match token {
             Some(token) => request.bearer_auth(token),
             None => request,
+        }
+    }
+
+    /// Whether a Seiza sync server answers at this address.
+    pub async fn health(&self) -> Result<()> {
+        let response = checked(self.http.get(format!("{}/health", self.address)).send().await).await?;
+        match response.text().await {
+            Ok(text) if text.trim() == "ok" => Ok(()),
+            _ => Err(ClientError::Unexpected),
         }
     }
 
@@ -173,6 +184,7 @@ impl Client {
     }
 
     /// Adds a sealed batch, returning its place in the group's order.
+    #[allow(dead_code)]
     pub async fn upload_batch(&self, token: &str, sealed: Vec<u8>) -> Result<i64> {
         #[derive(Deserialize)]
         struct Seq {
@@ -187,6 +199,7 @@ impl Client {
     }
 
     /// The group's batches after `after`, in order, a page at a time.
+    #[allow(dead_code)]
     pub async fn batches_after(&self, token: &str, after: i64) -> Result<Batches> {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
@@ -380,7 +393,7 @@ mod tests {
 
         // Its person says Add.
         client
-            .send_message(&first.token, &pairing.slot, checked.welcome(&key))
+            .send_message(&first.token, &pairing.slot, checked.welcome(&key, "sky"))
             .await
             .unwrap();
         let label = key.seal_label(&checked.device_name);
@@ -388,7 +401,7 @@ mod tests {
 
         // The new device takes the group's key from the welcome, then collects its token.
         let inbox = client.messages(&joined.joiner_key, typed.slot(), 1).await.unwrap();
-        let received = joiner.finish(&inbox.messages[0]).unwrap();
+        let received = joiner.finish(&inbox.messages[0]).unwrap().key;
         assert_eq!(received, key);
         let membership = client
             .collect_device(&joined.joiner_key, typed.slot())

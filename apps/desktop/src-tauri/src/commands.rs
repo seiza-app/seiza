@@ -12,6 +12,7 @@ use crate::satellites::SatelliteAction;
 use crate::session::{EndReason, GateVisit, SessionRecord};
 use crate::settings::Settings;
 use crate::sites::SiteRule;
+use crate::sync::setup::{PairingState, SyncDevice, SyncStatus};
 use crate::timer::{Strictness, TimerSettings};
 use crate::updates::UpdateStatus;
 
@@ -389,4 +390,74 @@ pub fn first_weekday() -> Option<u8> {
 #[tauri::command]
 pub fn close_capture(app: AppHandle) -> Result<()> {
     crate::capture::close(&app, true)
+}
+
+// Settings › Sync (sync/setup.rs). Each that talks to the server is async, so the window stays
+// responsive while it waits.
+
+#[tauri::command]
+pub fn sync_status(app: AppHandle) -> Result<SyncStatus> {
+    crate::sync::setup::status(&app)
+}
+
+/// Start a new sync group on the server at `address`, with this computer as its first device.
+#[tauri::command]
+pub async fn sync_start_group(
+    app: AppHandle,
+    address: String,
+    device_name: String,
+    invite: Option<String>,
+) -> Result<()> {
+    crate::sync::setup::start_group(&app, &address, &device_name, invite.as_deref()).await
+}
+
+/// Join with a pairing code shown on a computer already in the group.
+#[tauri::command]
+pub async fn sync_join(app: AppHandle, address: String, code: String, device_name: String) -> Result<PairingState> {
+    crate::sync::setup::join(&app, &address, &code, &device_name).await
+}
+
+/// Add a device: shows a pairing code for the new computer.
+#[tauri::command]
+pub async fn sync_add_device(app: AppHandle) -> Result<PairingState> {
+    crate::sync::setup::add_device(&app).await
+}
+
+/// Add or Don't add, once the new computer has typed the code.
+#[tauri::command]
+pub fn sync_answer_device(app: AppHandle, add: bool) {
+    crate::sync::setup::answer_device(&app, add);
+}
+
+#[tauri::command]
+pub fn sync_pairing(app: AppHandle) -> PairingState {
+    crate::sync::setup::pairing(&app)
+}
+
+/// Stops the pairing that's running, so its code can't be used.
+#[tauri::command]
+pub fn sync_stop_pairing(app: AppHandle) {
+    crate::sync::setup::stop_pairing(&app);
+}
+
+#[tauri::command]
+pub async fn sync_devices(app: AppHandle) -> Result<Vec<SyncDevice>> {
+    crate::sync::setup::devices(&app).await
+}
+
+#[tauri::command]
+pub async fn sync_remove_device(app: AppHandle, device_id: String) -> Result<()> {
+    crate::sync::setup::remove_device(&app, &device_id).await
+}
+
+/// Leave sync. Returns whether the server heard.
+#[tauri::command]
+pub async fn sync_leave(app: AppHandle) -> Result<bool> {
+    crate::sync::setup::leave(&app).await
+}
+
+/// Move to another server, at `address`.
+#[tauri::command]
+pub async fn sync_move_server(app: AppHandle, address: String, invite: Option<String>) -> Result<()> {
+    crate::sync::setup::move_server(&app, &address, invite.as_deref()).await
 }

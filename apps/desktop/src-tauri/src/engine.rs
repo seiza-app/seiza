@@ -17,6 +17,7 @@ use crate::session::{
 use crate::settings::Settings;
 use crate::sites::{self, SiteRule, SiteSettings};
 use crate::store::{Store, Synced};
+use crate::sync::settings::SyncSettings;
 use crate::timer::{Strictness, TimerSettings};
 
 const PROFILES: &str = "profiles";
@@ -30,6 +31,8 @@ const OWN_QUOTES: &str = "ownQuotes";
 const SESSION_GOAL: &str = "sessionGoal";
 const PROFILE_STAMPS: &str = "profileStamps";
 const SITE_SETTINGS: &str = "siteSettings";
+/// This device's sync settings (sync/settings.rs), kept out of backups.
+const SYNC: &str = "sync";
 
 /// Emergency passes come back a week after they're used.
 const PASS_WEEK_MS: i64 = 7 * 24 * 60 * 60_000;
@@ -916,7 +919,6 @@ impl Engine {
 
     /// Marks every record to be sent again, for moving to another server or starting a new
     /// group.
-    #[allow(dead_code)]
     pub fn resend_all_records(&mut self) -> Result<()> {
         self.store.resend_all()
     }
@@ -974,6 +976,50 @@ impl Engine {
             SKY,
             &Synced {
                 value: state,
+                updated_at: now,
+            },
+        )
+    }
+
+    /// Takes the sync group's sky secret on joining it, so every device draws one sky. When the
+    /// Sky last showed new things stays this device's, so the rare events and comets that are
+    /// drawn again don't all play at once.
+    pub fn match_sky(&self, secret: &str, now: i64) -> Result<()> {
+        let mut state = self.sky_state(now)?;
+        state.secret = secret.to_owned();
+        self.store.save(
+            SKY,
+            &Synced {
+                value: state,
+                updated_at: now,
+            },
+        )
+    }
+
+    /// Whether this computer has logged sessions of its own (not sample ones), whose rare events
+    /// would be drawn again on joining a sync group.
+    pub fn has_own_sessions(&self) -> Result<bool> {
+        Ok(self
+            .store
+            .sessions()?
+            .iter()
+            .any(|s| !s.id.starts_with(crate::samples::SAMPLE_PREFIX)))
+    }
+
+    /// This device's sync settings, while it syncs.
+    pub fn sync_settings(&self) -> Result<Option<SyncSettings>> {
+        Ok(self
+            .store
+            .load::<Option<SyncSettings>>(SYNC)?
+            .and_then(|saved| saved.value))
+    }
+
+    /// Saves this device's sync settings, or `None` once it leaves sync.
+    pub fn set_sync_settings(&self, settings: Option<&SyncSettings>, now: i64) -> Result<()> {
+        self.store.save(
+            SYNC,
+            &Synced {
+                value: settings,
                 updated_at: now,
             },
         )
@@ -1671,6 +1717,44 @@ mod tests {
         assert!(engine.store.gate_visits().unwrap().is_empty());
         let names = engine.constellation_names().unwrap();
         assert_eq!(names.iter().map(|n| n.id.as_str()).collect::<Vec<_>>(), [real.id]);
+    }
+
+    #[test]
+    fn keeps_sync_settings_out_of_backups() {
+        let engine = engine();
+        assert_eq!(engine.sync_settings().unwrap(), None);
+        let settings = crate::sync::settings::SyncSettings::new(
+            "https://sync.example.com".into(),
+            crate::sync::client::Membership {
+                group_id: "group".into(),
+                device_id: "device".into(),
+                token: "the-token".into(),
+            },
+            &crate::sync::crypto::GroupKey::generate(),
+            "Mac mini".into(),
+        );
+        engine.set_sync_settings(Some(&settings), 1_000).unwrap();
+        assert_eq!(engine.sync_settings().unwrap(), Some(settings.clone()));
+        let backup = serde_json::to_string(&engine.backup(2_000).unwrap()).unwrap();
+        assert!(!backup.contains("the-token") && !backup.contains(&settings.key));
+
+        engine.set_sync_settings(None, 3_000).unwrap();
+        assert_eq!(engine.sync_settings().unwrap(), None);
+    }
+
+    #[test]
+    fn joining_a_group_takes_its_sky_and_keeps_what_was_seen_here() {
+        let mut engine = engine();
+        let here = engine.sky_state(1_000).unwrap();
+        engine.sky_seen(4_000, 5_000).unwrap();
+        assert!(!engine.has_own_sessions().unwrap());
+        engine.add_samples(5_000).unwrap();
+        assert!(!engine.has_own_sessions().unwrap());
+
+        engine.match_sky("the group's secret", 6_000).unwrap();
+        let joined = engine.sky_state(7_000).unwrap();
+        assert_ne!(joined.secret, here.secret);
+        assert_eq!((joined.secret.as_str(), joined.seen_at), ("the group's secret", 4_000));
     }
 
     #[test]
