@@ -54,6 +54,7 @@ import {
   markTourOffered,
   markUpdateOffered,
   nameConstellation,
+  onSynced,
   removeOwnQuote,
   releasePage,
   removeSampleData,
@@ -370,7 +371,8 @@ const sampleData = (action: 'add' | 'remove') =>
   });
 
 // A backup brings in more of the log, and maybe the sky's secret (on a computer with no sky of its
-// own yet), so the sky is read again.
+// own yet), so the sky is read again. So does sync, with sessions, trips and names from the
+// group's other computers, and the group's sky once this one joins.
 const imported = () =>
   run(async () => {
     sky.value = undefined;
@@ -378,6 +380,7 @@ const imported = () =>
     await loadNames();
     await loadSky();
   });
+onSynced(imported);
 
 const inState = (state: SatelliteState) => snapshot.value?.satellites.filter((s) => s.state === state) ?? [];
 const satellites = computed(() => ({

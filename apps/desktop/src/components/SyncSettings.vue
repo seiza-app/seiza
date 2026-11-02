@@ -265,6 +265,7 @@ const left = computed(() => {
         <p class="help">
           {{ status.lastSyncedAt ? `Last synced ${since(status.lastSyncedAt)}.` : 'Not synced yet.' }}
         </p>
+        <p v-if="status.problem" class="help problem" role="alert">{{ sentence(status.problem) }}</p>
       </div>
 
       <div class="field">

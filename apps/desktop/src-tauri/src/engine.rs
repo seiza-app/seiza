@@ -865,7 +865,6 @@ impl Engine {
 
     /// Up to `limit` records changed here since `cursor`, and the cursor for next time, for
     /// sync to send (records.rs).
-    #[allow(dead_code)]
     pub fn changed_records(&self, cursor: i64, limit: usize) -> Result<(Vec<Record>, i64)> {
         self.store.changed_since(cursor, limit)
     }
@@ -873,7 +872,6 @@ impl Engine {
     /// Saves records sync fetched from other devices, where they win over the copy here.
     /// Emergency passes used elsewhere count here too, since they're in the log. Returns how
     /// many changed something.
-    #[allow(dead_code)]
     pub fn apply_records(&mut self, records: &[Record], now: i64) -> Result<usize> {
         let applied = self.store.apply(records)?;
         if applied > 0 {

@@ -17,6 +17,11 @@ deviceName: string,
  */
 lastSyncedAt: number | null, 
 /**
+ * Why it last stopped syncing early, if the server or this app said why (being offline
+ * isn't shown, beyond when it last synced).
+ */
+problem: string | null, 
+/**
  * Whether this computer has sessions of its own, whose rare events and comets are drawn
  * again when it joins a group and takes the group's sky.
  */

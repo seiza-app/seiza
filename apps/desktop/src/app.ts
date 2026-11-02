@@ -181,6 +181,12 @@ export function useSyncStatus() {
   return status;
 }
 
+/** Calls `then` whenever records from the sync group's other computers arrive, or the group's sky. */
+export function onSynced(then: () => void) {
+  const stopListening = listen('synced', then);
+  onUnmounted(() => void stopListening.then((stop) => stop()));
+}
+
 /** How a pairing is going, on either computer, kept up to date. */
 export function usePairing() {
   const pairing = ref<PairingState>({ phase: 'idle' });
