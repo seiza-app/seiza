@@ -41,8 +41,9 @@ const props = defineProps<{
   comets: Comet[];
   /** Days in a row with a star by the end of the week being shown, `current` only for this week. */
   streaks: Streaks;
-  /** For each profile's star color. Deleted profiles get theirs from their id. */
   profiles: ProfileSummary[];
+  /** Each profile's saved star color, deleted ones' included (`savedStarColors`). */
+  starColors: ReadonlyMap<string, string | null>;
 }>();
 const emit = defineEmits<{
   /** The start of the week being shown, whenever it changes. */
@@ -196,7 +197,7 @@ const traceLabel = computed(
 );
 
 // Each profile's share of the week's focus, in its star color.
-const colorOf = (id: string) => starColorFor(id, props.profiles.find((profile) => profile.id === id)?.starColor);
+const colorOf = (id: string) => starColorFor(id, props.starColors.get(id));
 const focusTrend = computed(() => {
   if (!focus.value || !hasLastWeek.value) return '';
   const change = focus.value.focusedMs - focus.value.lastWeekMs;

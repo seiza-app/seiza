@@ -49,6 +49,16 @@ export function useNow() {
   return now;
 }
 
+/**
+ * Each profile's saved star color, by its id, deleted profiles' included, so their stars keep
+ * theirs. Profiles with none picked get one from their id (`starColorFor`).
+ */
+export const savedStarColors = (snapshot?: Snapshot) =>
+  new Map<string, string | null>([
+    ...Object.entries(snapshot?.deletedStarColors ?? {}),
+    ...(snapshot?.profiles ?? []).map((p) => [p.id, p.starColor] as const),
+  ]);
+
 /** Starts a session, with a goal if its profile asks for one and one was given. */
 export const startSession = (profileId: string, goal?: string) => invoke<void>('start_session', { profileId, goal });
 

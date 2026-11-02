@@ -10,7 +10,11 @@ import type { Settings } from "./Settings";
 /**
  * Everything the UI shows, sent whenever it changes.
  */
-export type Snapshot = { profiles: Array<ProfileSummary>, session: ActiveSession | null, settings: Settings, 
+export type Snapshot = { profiles: Array<ProfileSummary>, 
+/**
+ * The star color each deleted profile had, if it had one picked, so its stars keep it.
+ */
+deletedStarColors: { [key in string]: string }, session: ActiveSession | null, settings: Settings, 
 /**
  * Emergency passes left for the last 7 days.
  */

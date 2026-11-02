@@ -215,9 +215,10 @@ const FINDINGS: Finding[] = [
           <strong>A separate rule for forgiving slips.</strong> Seiza already doesn't punish them.
         </li>
         <li class="reveal" style="--d: 240ms">
-          <strong>Habit goals,</strong> like earning a site by going for a run, are parked until they've been thought
-          through. Pairing a treat with a chore does work, but a larger follow-up found a smaller effect than the first
-          study (<a href="https://repository.upenn.edu/oid_papers/150">Milkman, Minson &amp; Volpp, 2014</a>).
+          <strong>Habit goals,</strong> like earning a site by going for a run. Seiza is for focus, and building habits
+          is another app's job. Pairing a treat with a chore does work, but a larger follow-up found a smaller effect
+          than the first study:
+          <a href="https://repository.upenn.edu/oid_papers/150">Milkman, Minson &amp; Volpp, 2014</a>.
         </li>
       </ul>
     </section>
