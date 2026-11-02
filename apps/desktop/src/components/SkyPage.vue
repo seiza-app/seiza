@@ -27,6 +27,9 @@ const props = defineProps<{
   satelliteHotkey: string;
   /** Whether to offer the tour for new users, which the Sky does once. */
   offerTour: boolean;
+  /** A new version of the app to offer, which the Sky does once for each, and whether it's
+   * installing now or can be installed here at all. */
+  offerUpdate?: { version: string; installing: boolean; canInstall: boolean };
   starCount: number;
   /** What the top of the page shows: the date, a quote for the day, time locked in today, and the streak running now. */
   glance: { date: string; quote?: { text: string; author?: string }; lockedInMs: number; streak: number };
@@ -59,6 +62,8 @@ const emit = defineEmits<{
   month: [month: number | undefined];
   /** The answer to the tour's offer: take it, or not. */
   tour: [take: boolean];
+  /** The answer to a new version's offer, or a look at what's new in it first. */
+  update: [action: 'install' | 'later' | 'notes'];
 }>();
 
 // Stepping through the months, a month's constellations at a time.
@@ -142,6 +147,22 @@ watch(
               <span class="keys">
                 <button class="key next" type="button" @click="emit('tour', true)">Take the tour</button>
                 <button class="key" type="button" @click="emit('tour', false)">No thanks</button>
+              </span>
+            </div>
+          </Unfold>
+          <!-- Each new version is offered once, and stays in Settings after that. -->
+          <Unfold>
+            <div v-if="offerUpdate && !session" class="card offer update" role="status">
+              <span class="mono"
+                >✦ {{ offerUpdate.installing ? 'Updating to' : 'New version' }} ·
+                <b>Seiza {{ offerUpdate.version }}</b></span
+              >
+              <span v-if="!offerUpdate.installing" class="keys">
+                <button class="key" type="button" @click="emit('update', 'notes')">What's new ↗</button>
+                <button v-if="offerUpdate.canInstall" class="key next" type="button" @click="emit('update', 'install')">
+                  Update and restart
+                </button>
+                <button class="key" type="button" @click="emit('update', 'later')">Later</button>
               </span>
             </div>
           </Unfold>
@@ -354,6 +375,12 @@ figcaption::before {
 .offer .keys {
   display: flex;
   gap: 6px;
+}
+
+/* A new version's offer has three keys, so they go under the line when the window is narrow. */
+.offer.update {
+  flex-wrap: wrap;
+  row-gap: 6px;
 }
 
 .offer .next {

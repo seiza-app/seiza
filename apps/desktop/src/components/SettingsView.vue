@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { BlockerStatus, KnownBrowser, OwnQuote, SavedBackup, Settings } from '@lock-in/core';
+import type { BlockerStatus, KnownBrowser, OwnQuote, SavedBackup, Settings, UpdateStatus } from '@lock-in/core';
 import {
   backupDay,
   glowFor,
@@ -13,7 +13,18 @@ import {
 } from '@lock-in/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { computed, onMounted, ref } from 'vue';
-import { blockerStatus, exportBackup, importBackup, installBlocker, mac, removeBlocker, showBackup } from '../app';
+import {
+  blockerStatus,
+  checkForUpdates,
+  exportBackup,
+  importBackup,
+  installBlocker,
+  installUpdate,
+  mac,
+  releasePage,
+  removeBlocker,
+  showBackup,
+} from '../app';
 import GlowPicker from './GlowPicker.vue';
 import HotkeyField from './HotkeyField.vue';
 import NumberField from './NumberField.vue';
@@ -27,6 +38,7 @@ const props = defineProps<{
   /** All the time ever focused, which unlocks glow colors. */
   lifetimeFocusMs: number;
   ownQuotes: OwnQuote[];
+  updates?: UpdateStatus;
 }>();
 const emit = defineEmits<{
   'update:settings': [settings: Settings];
@@ -43,9 +55,12 @@ const emit = defineEmits<{
 // Sample data is for trying the app while developing it, so release builds don't offer it.
 const development = import.meta.env.DEV;
 
-// The sections are numbered in order, like the weekly report's.
+// The sections are numbered in order, like the weekly report's. Updates come first while a new
+// version is waiting, so it's easy to find from the dot on the Settings tab.
 const blocker = ref<BlockerStatus>();
+const newVersion = computed(() => props.updates?.available ?? undefined);
 const sections = computed(() => [
+  ...(newVersion.value ? ['updates'] : []),
   'sessions',
   'satellites',
   'browsers',
@@ -55,6 +70,7 @@ const sections = computed(() => [
   'glow',
   'tour',
   'backup',
+  ...(newVersion.value ? [] : ['updates']),
   ...(development ? ['sample'] : []),
 ]);
 const numbered = (section: string) => String(sections.value.indexOf(section) + 1).padStart(2, '0');
@@ -142,6 +158,29 @@ function bringIn(event: Event) {
     backupNote.value = importSummary(await importBackup(await file.text()));
     emit('imported');
   });
+}
+
+// New versions (updates.rs): the app checks once a day unless this is off, and Check now asks
+// straight away. Installing restarts the app, so it waits until a session ends.
+const updateBusy = ref(false);
+const updateProblem = ref('');
+const checkedAt = new Intl.DateTimeFormat(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+
+async function withUpdates(action: () => Promise<unknown>) {
+  updateBusy.value = true;
+  updateProblem.value = '';
+  try {
+    await action();
+  } catch (reason) {
+    updateProblem.value = `That didn't work: ${String(reason)}`;
+  } finally {
+    updateBusy.value = false;
+  }
+}
+
+function setChecking(on: boolean) {
+  save({ checkForUpdates: on });
+  if (on) void withUpdates(checkForUpdates);
 }
 
 // The one place the app asks for support: a quiet line at the very bottom (PLAN.md §8).
@@ -429,6 +468,66 @@ const glowHelp = computed(() => {
       <p v-if="backupProblem" class="help problem" role="alert">{{ backupProblem }}</p>
     </section>
 
+    <section class="read" :class="{ first: newVersion }" aria-labelledby="updates">
+      <h2 id="updates" class="mono">{{ numbered('updates') }} — Updates</h2>
+      <div class="field">
+        <p v-if="newVersion" class="status-line">
+          <span class="dot new" aria-hidden="true" />
+          <span class="version"
+            >Seiza <b>{{ newVersion }}</b> is out
+            <span class="faint mono">· you have {{ updates?.currentVersion }}</span></span
+          >
+        </p>
+        <p v-else class="mono status-line">
+          <span class="dot" :class="{ off: !updates?.checkedAt }" aria-hidden="true" />
+          Seiza {{ updates?.currentVersion }}
+          {{ updates?.checkedAt ? `· up to date as of ${checkedAt.format(updates.checkedAt)}` : '· not checked yet' }}
+        </p>
+        <div class="keys">
+          <button
+            v-if="newVersion && updates?.canInstall"
+            class="key next"
+            type="button"
+            :disabled="updateBusy || sessionRunning || updates.installing"
+            @click="withUpdates(installUpdate)"
+          >
+            Update and restart
+          </button>
+          <button v-if="newVersion" class="key" type="button" @click="openUrl(releasePage(newVersion))">
+            {{ updates?.canInstall ? "What's new ↗" : 'Download ↗' }}
+          </button>
+          <button
+            class="key"
+            type="button"
+            :disabled="updateBusy || updates?.checking || updates?.installing"
+            @click="withUpdates(checkForUpdates)"
+          >
+            Check now
+          </button>
+        </div>
+        <p v-if="updates?.installing" class="help" role="status">
+          Downloading Seiza {{ newVersion }}. It restarts by itself once it's installed.
+        </p>
+        <p v-else-if="newVersion && sessionRunning" class="help">Updating waits until this session ends.</p>
+        <p v-else-if="newVersion && !updates?.canInstall" class="help">
+          This copy wasn't installed from a release, so it can't update itself. The new version's page has its
+          downloads.
+        </p>
+        <p v-if="updateProblem" class="help problem" role="alert">{{ updateProblem }}</p>
+      </div>
+      <div class="field">
+        <ToggleSwitch
+          label="Check for updates automatically"
+          :model-value="settings.checkForUpdates"
+          @update:model-value="setChecking"
+        />
+        <p class="help">
+          Once a day, Seiza asks GitHub whether there's a new version. That's one request, carrying nothing about you
+          beyond what any web request does. A new version is offered once on the Sky, then waits here.
+        </p>
+      </div>
+    </section>
+
     <section v-if="development" class="read" aria-labelledby="sample">
       <h2 id="sample" class="mono">{{ numbered('sample') }} — Sample data <span class="faint">· dev builds</span></h2>
       <div class="field">
@@ -457,7 +556,14 @@ const glowHelp = computed(() => {
 <style scoped>
 /* Everything sits in one dark frame, so it reads well over a busy part of the sky. */
 .settings {
+  display: flex;
+  flex-direction: column;
   padding: 0 14px 12px;
+}
+
+/* Updates move to the top while a new version is waiting. */
+.first {
+  order: -1;
 }
 
 /* Numbered sections with hairlines between them, like the weekly report. */
@@ -543,6 +649,19 @@ h2 {
 
 .dot.off {
   --c: var(--faint);
+}
+
+.dot.new {
+  --c: var(--glow);
+}
+
+.version {
+  font-size: 12.5px;
+}
+
+.keys .next {
+  color: var(--starlight);
+  border-color: var(--tick);
 }
 
 .keys {

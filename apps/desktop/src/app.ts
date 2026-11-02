@@ -15,6 +15,7 @@ import type {
   SkyState,
   Snapshot,
   TimerSettings,
+  UpdateStatus,
 } from '@lock-in/core';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -134,6 +135,26 @@ export const importBackup = (json: string) => invoke<ImportReport>('import_backu
 
 /** Notes that the tour for new users has been offered, so the Sky doesn't offer it again. */
 export const markTourOffered = () => invoke<void>('tour_offered');
+
+/** Whether a new version of the app is out (updates.rs), kept up to date as checks run. */
+export function useUpdates() {
+  const updates = ref<UpdateStatus>();
+  const stopListening = listen<UpdateStatus>('updates', (event) => (updates.value = event.payload));
+  void invoke<UpdateStatus>('update_status').then((value) => (updates.value ??= value));
+  onUnmounted(() => void stopListening.then((stop) => stop()));
+  return updates;
+}
+
+export const checkForUpdates = () => invoke<UpdateStatus>('check_for_updates');
+
+/** Downloads and installs the new version, then restarts the app. Between sessions only. */
+export const installUpdate = () => invoke<void>('install_update');
+
+/** Notes that the Sky has offered this version, so it doesn't offer it again. */
+export const markUpdateOffered = (version: string) => invoke<void>('update_offered', { version });
+
+/** A version's page on GitHub: what's new in it, and its downloads. */
+export const releasePage = (version: string) => `https://github.com/seiza-app/seiza/releases/tag/v${version}`;
 
 /** Trips to redirected sites that went back to focus, oldest first, for comets. */
 export const turnedBack = () => invoke<GateVisitRecord[]>('turned_back');

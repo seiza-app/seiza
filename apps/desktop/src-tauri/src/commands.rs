@@ -13,6 +13,7 @@ use crate::session::{EndReason, GateVisit, SessionRecord};
 use crate::settings::Settings;
 use crate::sites::SiteRule;
 use crate::timer::{Strictness, TimerSettings};
+use crate::updates::UpdateStatus;
 
 #[tauri::command]
 pub fn snapshot(app: AppHandle) -> Snapshot {
@@ -296,6 +297,32 @@ pub fn import_backup(app: AppHandle, json: String) -> Result<ImportReport> {
 #[tauri::command]
 pub fn tour_offered(app: AppHandle) -> Result<()> {
     crate::engine(&app).tour_offered(crate::now_ms())?;
+    crate::changed(&app);
+    Ok(())
+}
+
+/// Whether a new version of the app is out, as of the last check.
+#[tauri::command]
+pub fn update_status(app: AppHandle) -> UpdateStatus {
+    crate::updates::status(&app)
+}
+
+/// Checks for a new version now, from Settings.
+#[tauri::command]
+pub async fn check_for_updates(app: AppHandle) -> Result<UpdateStatus> {
+    crate::updates::check(&app).await
+}
+
+/// Installs the new version and restarts the app, between sessions.
+#[tauri::command]
+pub async fn install_update(app: AppHandle) -> Result<()> {
+    crate::updates::install(&app).await
+}
+
+/// Notes that the Sky has offered this version, so it doesn't offer it again.
+#[tauri::command]
+pub fn update_offered(app: AppHandle, version: String) -> Result<()> {
+    crate::engine(&app).update_offered(&version, crate::now_ms())?;
     crate::changed(&app);
     Ok(())
 }

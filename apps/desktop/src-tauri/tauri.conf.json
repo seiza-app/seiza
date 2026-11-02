@@ -20,6 +20,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -29,6 +30,13 @@
     ],
     "macOS": {
       "signingIdentity": "-"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": ["https://github.com/seiza-app/seiza/releases/latest/download/latest.json"],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJDOTA4QjVDMjM0RTUyNkYKUldSdlVrNGpYSXVRTE1QeGhUSGkzUFc4RFJyMGFQM0NkS2QwMitPNFl3aXQvYTg3MWliMlkxa1EK",
+      "requireSignedVersion": true
     }
   }
 }

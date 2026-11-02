@@ -27,6 +27,9 @@ tauri-plugin-notification = "2.6"
 tauri-plugin-single-instance = "2.5"
 # The hotkey that opens the satellite box from anywhere.
 tauri-plugin-global-shortcut = "2.4"
+# Checking for, downloading and installing a new version, signed with the release key. Without
+# its zip support, which only Windows updates use.
+tauri-plugin-updater = { version = "2.14", default-features = false, features = ["rustls-tls", "system-proxy"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.40", features = ["bundled"] }
