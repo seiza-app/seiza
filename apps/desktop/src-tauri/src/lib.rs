@@ -24,6 +24,9 @@ mod session;
 mod settings;
 mod sites;
 mod store;
+// Not used until Settings › Sync (PLAN §8, Sync, step 4).
+#[allow(dead_code)]
+mod sync;
 mod timer;
 mod tray;
 mod updates;
