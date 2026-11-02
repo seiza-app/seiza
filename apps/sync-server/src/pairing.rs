@@ -55,20 +55,48 @@ pub struct Inbox {
 #[derive(Default)]
 pub struct Pairings {
     open: Mutex<HashMap<String, Pairing>>,
+    /// New devices that were admitted but whose pairing went (expired or replaced) before they
+    /// collected their token, until they're handed back to be removed.
+    uncollected: Mutex<Vec<NewDevice>>,
 }
 
 impl Pairings {
     fn lock(&self, now: i64) -> std::sync::MutexGuard<'_, HashMap<String, Pairing>> {
         let mut open = self.open.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        open.retain(|_, pairing| pairing.expires_at > now);
+        self.drop_where(&mut open, |pairing| pairing.expires_at <= now);
         open
     }
 
-    /// Opens a pairing for a device in a group, replacing one that group already has open.
-    /// Returns its slot and when it expires.
+    /// Drops the pairings that match, setting aside any new device they admitted.
+    fn drop_where(&self, open: &mut HashMap<String, Pairing>, matches: impl Fn(&Pairing) -> bool) {
+        let mut uncollected = Vec::new();
+        open.retain(|_, pairing| {
+            if !matches(pairing) {
+                return true;
+            }
+            uncollected.extend(pairing.admitted.take());
+            false
+        });
+        if !uncollected.is_empty() {
+            self.uncollected
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .append(&mut uncollected);
+        }
+    }
+
+    /// Drops expired pairings, and hands back the new devices that were admitted but never
+    /// collected their token, so they can be removed.
+    pub fn sweep(&self, now: i64) -> Vec<NewDevice> {
+        let _open = self.lock(now);
+        std::mem::take(&mut *self.uncollected.lock().unwrap_or_else(|poisoned| poisoned.into_inner()))
+    }
+
+    /// Opens a pairing for a device in a group, replacing one that group already has open (whose
+    /// uncollected device, if any, `sweep` hands back). Returns its slot and when it expires.
     pub fn open(&self, group_id: &str, host_device_id: &str, now: i64) -> Result<(String, i64), ApiError> {
         let mut open = self.lock(now);
-        open.retain(|_, pairing| pairing.group_id != group_id);
+        self.drop_where(&mut open, |pairing| pairing.group_id == group_id);
         if open.len() >= MAX_OPEN {
             return Err(ApiError::TooManyRequests);
         }
@@ -303,6 +331,40 @@ mod tests {
             (first != second).then_some(ApiError::NotFound)
         );
         assert!(pairings.join(&second, 2).is_ok());
+    }
+
+    #[test]
+    fn an_expired_pairing_hands_back_its_uncollected_device() {
+        let pairings = Pairings::default();
+        let (slot, _) = pairings.open("g", "host", 0).unwrap();
+        pairings.join(&slot, 1).unwrap();
+        pairings.admit(&slot, device(), 2).unwrap();
+        assert_eq!(pairings.sweep(PAIRING_MS - 1), vec![]);
+        assert_eq!(pairings.sweep(PAIRING_MS), vec![device()]);
+        assert_eq!(pairings.sweep(PAIRING_MS), vec![]);
+    }
+
+    #[test]
+    fn a_replaced_pairing_hands_back_its_uncollected_device() {
+        let pairings = Pairings::default();
+        let (slot, _) = pairings.open("g", "host", 0).unwrap();
+        pairings.join(&slot, 1).unwrap();
+        pairings.admit(&slot, device(), 2).unwrap();
+        pairings.open("other", "host", 3).unwrap();
+        assert_eq!(pairings.sweep(3), vec![]);
+        pairings.open("g", "host", 3).unwrap();
+        assert_eq!(pairings.sweep(3), vec![device()]);
+    }
+
+    #[test]
+    fn a_collected_device_is_not_handed_back() {
+        let pairings = Pairings::default();
+        let (slot, _) = pairings.open("g", "host", 0).unwrap();
+        pairings.join(&slot, 1).unwrap();
+        pairings.admit(&slot, device(), 2).unwrap();
+        pairings.collect(&slot, 3).unwrap();
+        pairings.open("g", "host", 4).unwrap();
+        assert_eq!(pairings.sweep(PAIRING_MS * 2), vec![]);
     }
 
     #[test]

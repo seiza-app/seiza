@@ -6,6 +6,7 @@
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use axum::body::Bytes;
 use axum::extract::{ConnectInfo, DefaultBodyLimit, FromRequestParts, Path, Query, Request, State};
@@ -38,6 +39,8 @@ const MAX_LABEL_BYTES: usize = 512;
 /// A page of batches holds at most this many, or about this many bytes.
 const PAGE_BATCHES: usize = 500;
 const PAGE_BYTES: usize = 4 * 1024 * 1024;
+/// How often expired pairings are swept for new devices that never collected their token.
+const SWEEP_EVERY: Duration = Duration::from_secs(60);
 
 #[derive(Clone)]
 pub struct App(Arc<Inner>);
@@ -352,6 +355,8 @@ struct PairingResponse {
 
 async fn open_pairing(State(app): State<App>, Authed(device): Authed) -> Result<Json<PairingResponse>, ApiError> {
     let (slot, expires_at) = app.0.pairings.open(&device.group_id, &device.id, app.now())?;
+    // The group's earlier pairing may have admitted a device that never collected its token.
+    forget_uncollected(&app).await?;
     Ok(Json(PairingResponse { slot, expires_at }))
 }
 
@@ -482,6 +487,26 @@ async fn forget(app: &App, device: NewDevice) -> Result<(), ApiError> {
         .map(|_| ())
 }
 
+/// Removes the devices admitted by pairings that went (expired or replaced) before they were
+/// collected.
+async fn forget_uncollected(app: &App) -> Result<(), ApiError> {
+    for device in app.0.pairings.sweep(app.now()) {
+        forget(app, device).await?;
+    }
+    Ok(())
+}
+
+/// Sweeps expired pairings every minute, since one can expire with nothing else touching the
+/// pairings for a long while, which would leave its uncollected device in the group.
+pub async fn sweep_pairings(app: App) {
+    let mut every = tokio::time::interval(SWEEP_EVERY);
+    loop {
+        every.tick().await;
+        // A database error is already logged, and the next sweep has nothing left to retry.
+        let _ = forget_uncollected(&app).await;
+    }
+}
+
 /// The new device collects its token once it's been admitted: 200 with it, or 204 while it waits.
 async fn collect_device(State(app): State<App>, headers: HeaderMap, Path(slot): Path<String>) -> Response {
     let result = async {
@@ -527,6 +552,7 @@ mod tests {
     use crate::pairing::PAIRING_MS;
 
     struct Server {
+        app: App,
         router: Router,
         clock: Arc<AtomicI64>,
     }
@@ -590,8 +616,8 @@ mod tests {
             let app = App::with_clock(db::open_in_memory().unwrap(), config, move || {
                 reading.load(Ordering::SeqCst)
             });
-            let router = router(app).layer(MockConnectInfo(SocketAddr::from(([10, 0, 0, 1], 5000))));
-            Self { router, clock }
+            let router = router(app.clone()).layer(MockConnectInfo(SocketAddr::from(([10, 0, 0, 1], 5000))));
+            Self { app, router, clock }
         }
 
         fn advance(&self, ms: i64) {
@@ -658,6 +684,30 @@ mod tests {
                 .send(Call::new(Method::GET, &format!("/v1/pairings/{slot}/device")).token(&key))
                 .await;
             device["token"].as_str().unwrap().to_string()
+        }
+
+        /// Opens a pairing and has a new device join it and be admitted, without collecting its
+        /// token.
+        async fn admit_without_collecting(&self, host_token: &str) {
+            let (_, opened) = self
+                .send(Call::new(Method::POST, "/v1/pairings").token(host_token))
+                .await;
+            let slot = opened["slot"].as_str().unwrap().to_string();
+            self.send(Call::new(Method::POST, &format!("/v1/pairings/{slot}/join")))
+                .await;
+            let (status, _) = self
+                .send(
+                    Call::new(Method::POST, &format!("/v1/pairings/{slot}/admit"))
+                        .token(host_token)
+                        .json(json!({ "label": label("desktop") })),
+                )
+                .await;
+            assert_eq!(status, StatusCode::OK);
+        }
+
+        async fn device_count(&self, token: &str) -> usize {
+            let (_, devices) = self.send(Call::new(Method::GET, "/v1/devices").token(token)).await;
+            devices["devices"].as_array().unwrap().len()
         }
     }
 
@@ -864,6 +914,27 @@ mod tests {
             .await;
         let (_, devices) = server.send(Call::new(Method::GET, "/v1/devices").token(&host)).await;
         assert_eq!(devices["devices"].as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_expired_pairing_removes_its_uncollected_device() {
+        let server = Server::new(NewGroups::Open);
+        let (_, _, host) = server.first_device().await;
+        server.admit_without_collecting(&host).await;
+        assert_eq!(server.device_count(&host).await, 2);
+        server.advance(PAIRING_MS);
+        forget_uncollected(&server.app).await.unwrap();
+        assert_eq!(server.device_count(&host).await, 1);
+    }
+
+    #[tokio::test]
+    async fn a_replaced_pairing_removes_its_uncollected_device() {
+        let server = Server::new(NewGroups::Open);
+        let (_, _, host) = server.first_device().await;
+        server.admit_without_collecting(&host).await;
+        let (status, _) = server.send(Call::new(Method::POST, "/v1/pairings").token(&host)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(server.device_count(&host).await, 1);
     }
 
     #[tokio::test]

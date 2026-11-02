@@ -118,7 +118,8 @@ To restore, stop the server and put the backup in place of `/data/seiza-sync.db`
   before doing any work.
 - Groups are protected by their devices' tokens, and new devices only get in through a pairing:
   single use, five minutes, one new device per pairing, and either side can end it, which the app
-  does as soon as a code turns out wrong.
+  does as soon as a code turns out wrong. A device that was added but never collected its token
+  (the pairing ended, expired or was replaced first) is taken out of the group again.
 - Rate limits per address, each minute: 300 requests, 10 attempts to join a pairing, and 3 new
   groups.
 - Size caps: 1 MB per batch, 4 KB per pairing message, and the group cap above.
