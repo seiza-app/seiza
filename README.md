@@ -6,7 +6,7 @@ A free, open-source focus app. Social media is light pollution: when you lock in
 
 ![YouTube's video page before and after Seiza tames it: the recommendations and Shorts are gone, and the video and its comments stay.](.github/readme/tamed.png)
 
-> **Status:** 0.1.0, the first release. The desktop app for macOS and Linux is on [Releases](https://github.com/seiza-app/seiza/releases/latest), and the browser extension is in review at the Chrome Web Store and Firefox Add-ons. See [PLAN.md](PLAN.md) for the roadmap.
+> **Status:** 0.2.0, the first version that updates itself. The desktop app for macOS and Linux is on [Releases](https://github.com/seiza-app/seiza/releases/latest), and the browser extension is in review at the Chrome Web Store and Firefox Add-ons. See [PLAN.md](PLAN.md) for the roadmap.
 
 ## Tame, don't just block
 
