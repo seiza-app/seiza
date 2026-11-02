@@ -6,20 +6,16 @@ packages:
 # noticed and pulled first. Dependabot's cooldown (.github/dependabot.yml) matches it.
 minimumReleaseAge: 20160
 # Security fixes don't wait. These have advisories against every release old enough, and are
-# exempt until their fixes are two weeks old (after 9 November 2026); then remove them.
+# exempt until their fixes are two weeks old (after 9 November 2026, node-forge after 10 November);
+# then remove them.
 minimumReleaseAgeExclude:
   - undici # GHSA-xjj6-f33q-929c, fixed in 8.12.2
   - simple-git # GHSA-x6jw-m9v5-85vh and others, fixed in 4.0.1, through Nuxt's devtools
   - '@simple-git/*'
   - '@nuxt/devtools*'
+  - node-forge # GHSA-5x38-2vff-x55p and four others, fixed in 1.4.1, through Nuxt's dev server
 
 allowBuilds:
   esbuild: false
   # Its install script downloads Chrome. The browser tests fetch it explicitly instead.
   puppeteer: false
-
-auditConfig:
-  ignoreGhsas:
-    # node-forge's RSA signature check, reached only through Nuxt's dev server (listhen), which
-    # uses node-forge to make a local HTTPS certificate, not to check signatures. No fix yet.
-    - GHSA-86w9-cpqp-85rv
