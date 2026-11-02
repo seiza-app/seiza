@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { Profile, SiteLevel, SiteRule } from '@lock-in/core';
+import type { OtherSitesLevel, Profile, SiteLevel, SiteRule } from '@lock-in/core';
 import {
   hasRoomForOwnSite,
   maxOwnSites,
@@ -18,9 +18,10 @@ import SegmentedControl from './SegmentedControl.vue';
 // then any added by address, with its level. The extension does the taming and redirecting, and
 // gets every change here through the link. What Tamed hides, and page rules, are set there, and
 // so are the parts of a page picked to hide with its element picker, and taming a site all the
-// time with no session running.
-const props = defineProps<{ sites: SiteRule[] }>();
-const emit = defineEmits<{ 'update:sites': [sites: SiteRule[]] }>();
+// time with no session running. Every other site, at the end, is what happens to the rest, so a
+// profile can let through only the sites it allows.
+const props = defineProps<{ sites: SiteRule[]; otherSites: OtherSitesLevel }>();
+const emit = defineEmits<{ update: [sites: SiteRule[], otherSites: OtherSitesLevel] }>();
 
 const own = computed(() =>
   props.sites.flatMap((site) => {
@@ -36,10 +37,30 @@ const levels = siteLevels;
 // Every site can be tamed: built-in ones with their recipe, added ones by hiding the parts picked
 // on the page in the extension.
 const levelOptions = levels.map((level) => ({ id: level.id, label: level.label }));
+// Sites nobody listed have no recipe, so Tamed stays in its place, turned off, to keep the
+// columns lined up with the sites above.
+const otherOptions = levels.map((level) => ({
+  id: level.id,
+  label: level.label,
+  disabled: level.id === 'tamed',
+  title: level.id === 'tamed' ? "There's nothing to tame on sites that aren't listed." : undefined,
+}));
+const othersDetail: Record<OtherSitesLevel, string> = {
+  allowed: "Every site that isn't listed is left alone. Restrict them to let through only the sites you allow.",
+  redirected:
+    "Every site that isn't listed goes to Seiza's page first, with a way through for a few minutes. Addresses on this computer or your network always load.",
+  restricted:
+    "Only the listed sites that aren't restricted get through. Every other site is shut until the session ends. Addresses on this computer or your network always load.",
+};
+// A built-in site with no rule follows every other site, so that's the level it shows.
+const levelOf = (id: string) => ruleFor(id)?.level ?? props.otherSites;
 
 // The edits are the extension's own (packages/core), on this profile's sites alone.
 const edit = (change: (list: Profile[]) => Profile[]) =>
-  emit('update:sites', change([{ id: 'this', name: '', sites: props.sites }])[0]!.sites);
+  emit('update', change([{ id: 'this', name: '', sites: props.sites }])[0]!.sites, props.otherSites);
+const setOthers = (level: SiteLevel) => {
+  if (level !== 'tamed') emit('update', props.sites, level);
+};
 const setLevel = (recipeId: string, level: SiteLevel) => edit((list) => withSiteLevel(list, 'this', recipeId, level));
 const remove = (recipeId: string) => edit((list) => withSiteRemoved(list, 'this', recipeId));
 
@@ -59,10 +80,11 @@ const problem = computed(() => {
   }
   return '';
 });
+// A site added while every other site is kept away is one to let through.
 function add() {
   const site = found.value;
   if (!site || problem.value) return;
-  setLevel(site.id, 'redirected');
+  setLevel(site.id, props.otherSites === 'allowed' ? 'redirected' : 'allowed');
   draft.value = '';
 }
 </script>
@@ -87,7 +109,7 @@ function add() {
           class="levels"
           :label="`What happens to ${recipe.name}`"
           :options="levelOptions"
-          :model-value="ruleFor(recipe.id)?.level ?? 'allowed'"
+          :model-value="levelOf(recipe.id)"
           @update:model-value="setLevel(recipe.id, $event)"
         />
         <button
@@ -101,6 +123,18 @@ function add() {
           ×
         </button>
         <span v-else class="spacer" aria-hidden="true" />
+      </li>
+      <li class="others">
+        <span class="name"><b>Every other site</b></span>
+        <SegmentedControl
+          class="levels"
+          label="What happens to every other site"
+          :options="otherOptions"
+          :model-value="otherSites"
+          @update:model-value="setOthers"
+        />
+        <span class="spacer" aria-hidden="true" />
+        <p class="detail">{{ othersDetail[otherSites] }}</p>
       </li>
     </ul>
 
@@ -117,10 +151,11 @@ function add() {
     <p v-if="problem" class="problem">{{ problem }}</p>
 
     <p class="help">
-      These apply in the browser, through Seiza's extension, while this profile runs. Added sites start out redirected,
-      and the browser asks once to let Seiza reach each one. What Tamed hides, and page rules, are set in the
-      extension's settings. To hide part of a page, open the site and choose Hide parts of this page in the extension's
-      popup. Any site can also be tamed all the time, with no session running, set there too.
+      These apply in the browser, through Seiza's extension, while this profile runs. Added sites start out redirected
+      (or allowed, while every other site is kept away), and the browser asks once to let Seiza reach each one, or every
+      site to keep away the ones that aren't listed. What Tamed hides, and page rules, are set in the extension's
+      settings. To hide part of a page, open the site and choose Hide parts of this page in the extension's popup. Any
+      site can also be tamed all the time, with no session running, set there too.
     </p>
   </div>
 </template>
@@ -181,6 +216,19 @@ ul {
 
 .sites li:last-child {
   border-bottom: 0;
+}
+
+/* Every other site closes the list, under a dashed line, with what it does spelled out. */
+.sites li:nth-last-child(2) {
+  border-bottom-style: dashed;
+}
+
+.others .detail {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--faint);
+  font-size: 11.5px;
+  line-height: 1.45;
 }
 
 .name {

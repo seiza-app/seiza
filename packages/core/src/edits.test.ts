@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   withNewProfile,
+  withOtherSites,
   withPathRuleRemoved,
   withPathRules,
   withProfileDuplicated,
@@ -169,6 +170,13 @@ describe('managing profiles', () => {
     });
   });
 
+  it('sets what happens to every other site, keeping nothing for Allowed', () => {
+    const restricted = withOtherSites(profiles, 'focus', 'restricted');
+    expect(restricted[0]!.otherSites).toBe('restricted');
+    expect(restricted[1]).toBe(profiles[1]);
+    expect(withOtherSites(restricted, 'focus', 'allowed')[0]).toEqual(profiles[0]);
+  });
+
   it("resets starter profiles and keeps the user's own", () => {
     const starters: Profile[] = [
       { id: 'focus', name: 'Focus', sites: [] },
@@ -211,6 +219,16 @@ describe('page rules', () => {
     });
   });
 
+  it('adds the rule at the level every other site has, so only the pages change', () => {
+    const allowlist = withOtherSites(profiles, 'focus', 'restricted');
+    const edited = withPathRules(allowlist, 'focus', 'x', ['/explore'], 'allowed');
+    expect(edited[0]!.sites.at(-1)).toEqual({
+      recipeId: 'x',
+      level: 'restricted',
+      paths: [{ path: '/explore', level: 'allowed' }],
+    });
+  });
+
   it('removes a path, dropping the list once it is empty', () => {
     const added = withPathRules(profiles, 'focus', 'example', ['/shorts', '/explore'], 'redirected');
     const one = withPathRuleRemoved(added, 'focus', 'example', '/shorts');
@@ -249,5 +267,13 @@ describe("the running session's rules", () => {
     const allow = (list: Profile[]) => withSiteLevel(list, 'focus', 'example', 'allowed');
     expect(withRulesEdited(hard, allow, 60_000)).toBe(hard);
     expect(withRulesEdited(running, allow, 60_000).rules).toEqual(allow([profiles[0]!])[0]);
+
+    const allowlist: Session = { ...hard, rules: { ...profiles[0]!, otherSites: 'restricted' } };
+    const loosen = (list: Profile[]) => withOtherSites(list, 'focus', 'redirected');
+    const tighten = (list: Profile[]) => withOtherSites(list, 'focus', 'restricted');
+    const addAllowed = (list: Profile[]) => withSiteLevel(list, 'focus', 'site:docs.com', 'allowed');
+    expect(withRulesEdited(allowlist, loosen, 60_000)).toBe(allowlist);
+    expect(withRulesEdited(allowlist, addAllowed, 60_000)).toBe(allowlist);
+    expect(withRulesEdited(hard, tighten, 60_000).rules?.otherSites).toBe('restricted');
   });
 });

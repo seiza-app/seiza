@@ -11,7 +11,7 @@ use crate::error::{Error, Result};
 use crate::satellites::SatelliteAction;
 use crate::session::{EndReason, GateVisit, SessionRecord};
 use crate::settings::Settings;
-use crate::sites::SiteRule;
+use crate::sites::{SiteLevel, SiteRule};
 use crate::sync::setup::{PairingState, SyncDevice, SyncStatus};
 use crate::timer::{Strictness, TimerSettings};
 use crate::updates::UpdateStatus;
@@ -121,8 +121,13 @@ pub fn set_profile_apps(app: AppHandle, profile_id: String, apps: Vec<AppRule>) 
 }
 
 #[tauri::command]
-pub fn set_profile_sites(app: AppHandle, profile_id: String, sites: Vec<SiteRule>) -> Result<()> {
-    crate::engine(&app).set_profile_sites(&profile_id, sites, crate::now_ms())?;
+pub fn set_profile_sites(
+    app: AppHandle,
+    profile_id: String,
+    sites: Vec<SiteRule>,
+    other_sites: SiteLevel,
+) -> Result<()> {
+    crate::engine(&app).set_profile_sites(&profile_id, sites, other_sites, crate::now_ms())?;
     crate::changed(&app);
     Ok(())
 }

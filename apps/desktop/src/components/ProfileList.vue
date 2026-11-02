@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import type { AppRule, ProfileSummary, SiteRule, Strictness, TimerSettings } from '@lock-in/core';
-import { starColorFor } from '@lock-in/core';
+import type { AppRule, OtherSitesLevel, ProfileSummary, SiteRule, Strictness, TimerSettings } from '@lock-in/core';
+import { otherSitesLevel, starColorFor } from '@lock-in/core';
 import { ref } from 'vue';
 import AppRulesEditor from './AppRulesEditor.vue';
 import PlanEditor from './PlanEditor.vue';
@@ -22,7 +22,7 @@ const emit = defineEmits<{
   'set-timer': [profileId: string, timer: TimerSettings];
   'set-ask-goal': [profileId: string, on: boolean];
   'set-apps': [profileId: string, apps: AppRule[]];
-  'set-sites': [profileId: string, sites: SiteRule[]];
+  'set-sites': [profileId: string, sites: SiteRule[], otherSites: OtherSitesLevel];
   'set-plan': [profileId: string, plan: string];
   'set-star-color': [profileId: string, color: string];
 }>();
@@ -45,11 +45,13 @@ const strictness: Record<Strictness, string> = { gentle: 'Gentle', medium: 'Medi
 function summary(profile: ProfileSummary): string {
   const { minutes } = profile.timer;
   const apps = profile.apps.length;
-  const sites = profile.sites.filter((site) => site.level !== 'allowed').length;
+  const others = otherSitesLevel(profile);
+  const sites = profile.sites.filter((site) => site.level !== others).length;
   return [
     minutes > 0 ? `${minutes} min · ${strictness[profile.timer.strictness]}` : 'No timer',
     apps > 0 && `${apps} ${apps === 1 ? 'app' : 'apps'}`,
     sites > 0 && `${sites} ${sites === 1 ? 'site' : 'sites'}`,
+    others !== 'allowed' && `every other site ${others}`,
   ]
     .filter((part) => typeof part === 'string')
     .join(' · ');
@@ -112,7 +114,8 @@ function summary(profile: ProfileSummary): string {
               <SitesEditor
                 v-else-if="open.panel === 'sites'"
                 :sites="profile.sites"
-                @update:sites="emit('set-sites', profile.id, $event)"
+                :other-sites="otherSitesLevel(profile)"
+                @update="(sites, others) => emit('set-sites', profile.id, sites, others)"
               />
               <PlanEditor
                 v-else-if="open.panel === 'plan'"

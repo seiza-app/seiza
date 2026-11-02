@@ -63,7 +63,7 @@ Raise `version` in `package.json` before each upload; both stores refuse a versi
 | `nativeMessaging` | Links to the Seiza desktop app on the same computer, when it's installed, so both share profiles and the current session. Nothing is sent anywhere else. |
 | `scripting` | Runs the taming stylesheet on sites the person adds themselves, after they grant access to that one site, and starts the "Hide parts of this page" picker on the current tab. |
 | Host permissions (the built-in sites) | Hides distracting parts of Reddit, YouTube, X, Instagram, TikTok, Facebook, LinkedIn, Pinterest, Twitch, Threads and Bluesky during a session, and redirects visits to them. |
-| Optional host permission (all sites) | Asked for one site at a time, only when the person adds that site to Seiza. |
+| Optional host permission (all sites) | Asked for one site at a time, only when the person adds that site to Seiza. Asked for all sites at once only if the person chooses to keep away every site they haven't listed during a session (a profile's "Every other site"), so Seiza can redirect those visits. |
 
 **Remote code:** No. All code is in the package.
 

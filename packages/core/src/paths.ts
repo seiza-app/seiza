@@ -1,3 +1,4 @@
+import { otherSitesLevel } from './profiles';
 import type { PathRule, Profile, SiteLevel } from './types';
 
 /** Longest page path we keep. */
@@ -57,10 +58,13 @@ export function findPathRule(rules: readonly PathRule[] | undefined, pathname: s
     );
 }
 
-/** How a profile treats one page of a site: the page rule that covers it, else the site's level. */
+/**
+ * How a profile treats one page of a site: the page rule that covers it, else the site's level,
+ * else what the profile does with every other site.
+ */
 export function levelFor(profile: Profile | undefined, recipeId: string, pathname?: string): SiteLevel {
   const rule = profile?.sites.find((site) => site.recipeId === recipeId);
-  if (!rule) return 'allowed';
+  if (!rule) return otherSitesLevel(profile);
   if (pathname === undefined) return rule.level;
   return findPathRule(rule.paths, pathname)?.level ?? rule.level;
 }

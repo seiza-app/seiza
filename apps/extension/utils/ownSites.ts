@@ -51,6 +51,31 @@ export function useReachable(domains: () => string[]): Ref<Set<string> | undefin
 }
 
 /**
+ * Every site, which Seiza needs to reach to keep away the sites a profile doesn't list (its
+ * "Every other site"). It's only asked for when that's set to anything but Allowed.
+ */
+const everySite = '*://*/*';
+
+/** Asks the browser to let Seiza reach every site. Resolves to whether it may. */
+export function askToReachEverySite(): Promise<boolean> {
+  return browser.permissions.request({ origins: [everySite] });
+}
+
+/** Whether Seiza may reach every site, kept current as the browser's permissions change. */
+export function useReachesEverySite(): Ref<boolean | undefined> {
+  const result = ref<boolean>();
+  const check = () => void browser.permissions.contains({ origins: [everySite] }).then((yes) => (result.value = yes));
+  check();
+  browser.permissions.onAdded.addListener(check);
+  browser.permissions.onRemoved.addListener(check);
+  onUnmounted(() => {
+    browser.permissions.onAdded.removeListener(check);
+    browser.permissions.onRemoved.removeListener(check);
+  });
+  return result;
+}
+
+/**
  * Runs the content script on the added sites Seiza may reach, as the manifest does on the
  * built-in ones, so their tabs are covered like any other. Called whenever the profiles, the site
  * settings or the permissions change, and when the browser starts.

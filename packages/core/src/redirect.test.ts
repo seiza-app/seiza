@@ -261,3 +261,80 @@ describe('siteAccess', () => {
     expect(siteAccess({ session, profiles, recipeId: 'docs', now })).toBe('open');
   });
 });
+
+describe('every other site', () => {
+  const allowlist = (otherSites: Profile['otherSites']): Profile[] => [
+    {
+      id: 'deep',
+      name: 'Deep',
+      otherSites,
+      sites: [
+        { recipeId: 'docs', level: 'allowed', paths: [{ path: '/drafts', level: 'restricted' }] },
+        { recipeId: 'x', level: 'redirected' },
+        { recipeId: 'site:wiki.org', level: 'tamed' },
+      ],
+    },
+  ];
+  const known = [...recipes, { id: 'site:wiki.org', name: 'wiki.org', matches: ['*://*.wiki.org/*'], toggles: [] }];
+  const rules = (otherSites: Profile['otherSites'], s: Session = session) =>
+    redirectRules({ session: s, profiles: allowlist(otherSites), recipes: known, now });
+  const blocks = (list: RedirectRule[], url: string) => {
+    const matching = list.filter((rule) => new RegExp(rule.regexFilter, 'i').test(url));
+    // At the same priority, an allow rule wins over a redirect, as in the browser.
+    const top = matching.sort((a, b) => b.priority - a.priority || (a.action === 'allow' ? -1 : 1))[0];
+    return top?.action === 'redirect';
+  };
+
+  it('keeps every unlisted site away, built-in ones too, and lets the listed ones through', () => {
+    const list = rules('restricted');
+    expect(blocks(list, 'https://example.com/')).toBe(true);
+    expect(blocks(list, 'https://www.reddit.com/r/all')).toBe(true);
+    expect(blocks(list, 'https://docs.com/doc/1')).toBe(false);
+    expect(blocks(list, 'https://docs.com/drafts/2')).toBe(true);
+    expect(blocks(list, 'https://en.wiki.org/a')).toBe(false);
+    expect(blocks(list, 'https://x.com/home')).toBe(true);
+    expect(siteAccess({ session, profiles: allowlist('restricted'), recipeId: 'reddit', now })).toBe('restricted');
+    expect(siteAccess({ session, profiles: allowlist('redirected'), recipeId: 'site:a.com', now })).toBe('redirected');
+  });
+
+  it('never covers this computer or the local network', () => {
+    const list = rules('restricted');
+    for (const url of [
+      'http://localhost:3000/',
+      'http://app.localhost/',
+      'http://127.0.0.1:8080/x',
+      'http://192.168.1.10:8006/',
+      'http://10.0.0.2/',
+      'http://172.20.1.1/',
+      'http://nas.local/',
+    ]) {
+      expect(blocks(list, url), url).toBe(false);
+    }
+    expect(blocks(list, 'http://172.32.1.1/')).toBe(true);
+    expect(blocks(list, 'https://localhost.example.com/')).toBe(true);
+  });
+
+  it('lets an unlisted site through while it has a pass', () => {
+    const passed = { ...session, passes: { 'site:example.com': now + minute, reddit: now + minute } };
+    const list = rules('redirected', passed);
+    expect(blocks(list, 'https://example.com/a')).toBe(false);
+    expect(blocks(list, 'https://reddit.com/')).toBe(false);
+    expect(blocks(list, 'https://example.org/')).toBe(true);
+    // Restricted stays shut, pass or not.
+    expect(blocks(rules('restricted', passed), 'https://example.com/a')).toBe(true);
+  });
+
+  it('adds nothing while every other site is allowed', () => {
+    expect(rules('allowed')).toEqual(rules(undefined));
+    expect(blocks(rules(undefined), 'https://example.com/')).toBe(false);
+  });
+
+  it('covers tabs open on an unlisted site', () => {
+    const unlisted = [{ id: 'site:example.com', name: 'example.com', matches: ['*://*.example.com/*'], toggles: [] }];
+    const check = (otherSites: Profile['otherSites']) =>
+      checkOpenPage({ url: 'https://example.com/', session, profiles: allowlist(otherSites), recipes: unlisted, now });
+    expect(check('restricted')).toMatchObject({ action: 'block' });
+    expect(check('redirected')).toMatchObject({ action: 'pause', passExpired: false });
+    expect(check(undefined)).toEqual({ action: 'none' });
+  });
+});

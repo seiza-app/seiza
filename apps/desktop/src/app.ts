@@ -7,6 +7,7 @@ import type {
   GlowColor,
   ImportReport,
   InstalledApp,
+  OtherSitesLevel,
   PairingState,
   SatelliteAction,
   SavedBackup,
@@ -89,8 +90,8 @@ export const removeBlocker = () => invoke<void>('remove_blocker');
 export const addOwnQuote = (text: string, author: string) => invoke<void>('add_own_quote', { text, author });
 export const removeOwnQuote = (id: string) => invoke<void>('remove_own_quote', { id });
 
-export const setProfileSites = (profileId: string, sites: SiteRule[]) =>
-  invoke<void>('set_profile_sites', { profileId, sites });
+export const setProfileSites = (profileId: string, sites: SiteRule[], otherSites: OtherSitesLevel) =>
+  invoke<void>('set_profile_sites', { profileId, sites, otherSites });
 
 export const setProfileAsksGoal = (profileId: string, on: boolean) =>
   invoke<void>('set_profile_asks_goal', { profileId, on });

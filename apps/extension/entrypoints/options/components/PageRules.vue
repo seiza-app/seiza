@@ -4,6 +4,7 @@ import {
   maxPathLength,
   maxPathRules,
   normalizePath,
+  otherSitesLevel,
   ownSiteDomain,
   type Profile,
   type SiteRecipe,
@@ -13,7 +14,7 @@ import LevelPicker from '@/components/LevelPicker.vue';
 
 const props = defineProps<{ profile: Profile; recipe: SiteRecipe }>();
 
-const siteLevel = computed(() => findRule(props.profile, props.recipe.id)?.level ?? 'allowed');
+const siteLevel = computed(() => findRule(props.profile, props.recipe.id)?.level ?? otherSitesLevel(props.profile));
 const rules = computed(() => findRule(props.profile, props.recipe.id)?.paths ?? []);
 // A new page goes the other way from its site: redirected inside an open site, allowed inside a closed one.
 const siteClosed = computed(() => siteLevel.value === 'redirected' || siteLevel.value === 'restricted');
