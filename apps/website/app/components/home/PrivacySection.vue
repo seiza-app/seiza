@@ -8,10 +8,7 @@
     <ul class="promises">
       <li class="hud glass reveal" style="--d: 220ms">
         <strong>Kept on your device</strong>
-        <p>
-          Your profiles, sessions, history and sky stay in your browser and the app's data folder, and on your own sync
-          server, encrypted, if you turn sync on.
-        </p>
+        <p>Your profiles, sessions, history and sky stay in your browser and the app's data folder.</p>
       </li>
       <li class="hud glass reveal" style="--d: 280ms">
         <strong>Linked locally</strong>

@@ -16,8 +16,7 @@ usePageSeo({
       <h1 class="reveal" style="--d: 80ms">Seiza collects nothing</h1>
       <p class="lede reveal" style="--d: 160ms">
         It has no accounts, no analytics, no ads, and no servers of its own. Nothing you do in it is sent to us or
-        anyone else. If you turn on sync, your data goes to a sync server you choose, encrypted so that server can't
-        read it. This covers the Seiza desktop app and the Seiza browser extension.
+        anyone else. This covers the Seiza desktop app and the Seiza browser extension.
       </p>
     </section>
 
@@ -90,31 +89,16 @@ usePageSeo({
       <p class="kicker mono reveal"><b>05</b> · Network</p>
       <h2 class="reveal" style="--d: 80ms">One request a day to GitHub, and sync if you want it</h2>
       <p class="lede reveal" style="--d: 160ms">
-        The extension makes no network requests. The app makes two kinds, and you can turn off both. Unless you turn it
-        off in Settings › Updates, it asks GitHub once a day whether there's a new version of Seiza, by downloading a
-        small file from the project's releases.
+        The extension makes no network requests. The app checks GitHub once a day for a new version, which you can turn
+        off in Settings › Updates. Otherwise, everything stays on your computer.
       </p>
       <p class="reveal" style="--d: 190ms">
-        The request carries nothing about you or what you do in Seiza, though like any web request it shows GitHub your
-        IP address (<a href="https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement"
+        The update check carries nothing about you, though like any web request it shows GitHub your IP address (<a
+          href="https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement"
           >GitHub's privacy statement</a
-        >
-        covers what GitHub keeps). If you update, the new version downloads from GitHub too, and the app checks its
-        signature before installing it. Seiza 0.1.0 doesn't check for updates. The quotes are bundled with the app.
-        Links you add yourself, like the support link or your own links on the redirect page, open in your browser like
-        any other link.
+        >). Updates download from GitHub too, and the app checks their signature before installing them.
       </p>
-      <p class="reveal" style="--d: 220ms">
-        Sync is off until you set it up in Settings › Sync, and Seiza has no sync server of its own: you use one you run
-        yourself, or one someone you trust runs. Once it's on, the app sends that server your finished sessions and
-        their goals, your visits to redirected sites, your constellation names, your profiles and this computer's name,
-        and fetches your other computers' changes. All of it is encrypted on your computer with a key the server never
-        gets, so whoever runs the server can't read it. They can see which computers are in your group, when each last
-        synced, how much it stores, and the IP addresses it syncs from. Your settings stay on each computer. Leave sync
-        stops a computer syncing and keeps everything on it, and the server deletes your group once its last computer
-        leaves.
-      </p>
-      <SyncNote class="reveal" style="--d: 250ms" />
+      <SyncNote class="reveal" style="--d: 220ms" />
     </section>
 
     <section id="changes" data-name="Changes">
