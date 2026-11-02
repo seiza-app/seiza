@@ -33,6 +33,10 @@ updates:
     groups:
       cargo:
         patterns: ['*']
+    ignore:
+      # zbus 6 moved the blocking API that idle.rs uses on Linux, so it's a change by hand, not a bump.
+      - dependency-name: zbus
+        update-types: [version-update:semver-major]
 
   - package-ecosystem: github-actions
     directory: /
