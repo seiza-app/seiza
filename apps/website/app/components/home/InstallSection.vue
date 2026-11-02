@@ -18,7 +18,9 @@
         <h3>The browser extension</h3>
         <p>For Chrome, Brave, Edge and Arc from the Chrome Web Store, and Firefox and Zen from Firefox Add-ons.</p>
         <div class="stores">
-          <a class="btn ghost" href="https://chromewebstore.google.com/detail/seiza/nencjadggelocffidegejpekamaeopjc">Chrome Web Store</a>
+          <a class="btn ghost" href="https://chromewebstore.google.com/detail/seiza/nencjadggelocffidegejpekamaeopjc"
+            >Chrome Web Store</a
+          >
           <a class="btn ghost" href="https://addons.mozilla.org/en-US/firefox/addon/seiza-app/">Firefox Add-ons</a>
         </div>
       </div>
