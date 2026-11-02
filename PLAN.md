@@ -524,7 +524,7 @@ Built in slices, one PR each:
 **Phase 6: Website, community sky & sync**
 - Marketing website (§10) + community-worlds gallery, with the Why it works page (§12).
   - ✅ The website in `apps/website`, built from mock-up D (`prototypes/website`): the framed home page with the Lock in switch, the four levels, the redirect page, the sky, satellites, privacy and install; Why it works (§12) and Privacy pages; the quiet Ko-fi link in the footer; and a note that sync is planned, free to self-host or hosted for a small fee (§8). Static, served by a Cloudflare Worker deployed from GitHub. Still to do: the domain, store links once the extension is listed, and the community-worlds gallery.
-  - Copy that's out of date after the sync and habit goals planning (§8, §12): the sync note (`SyncNote.vue`) still promises hosting "for a small fee", but sync is self-hosted first and a hosted tier only maybe later; and Why it works (`why-it-works.vue`) still calls habit goals parked, when they've been dropped as out of scope.
+  - ✅ Copy brought up to date after the sync and habit goals planning (§8, §12): the sync note (`SyncNote.vue`) says sync is being built and self-hosted, with no hosted tier promised; Why it works (`why-it-works.vue`) lists habit goals as out of scope rather than parked.
 - Constellation sharing endpoint.
 - Sync between devices (§8, Sync): self-hosted first, starting with the session log, trips and constellation names, in the build order there. Profiles and live sessions straight after, then satellites; a hosted tier maybe later.
 
