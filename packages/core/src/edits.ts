@@ -1,9 +1,9 @@
 import { maxPathRules, normalizePath } from './paths';
-import { sessionProfile } from './profiles';
+import { otherSitesLevel, sessionProfile } from './profiles';
 import { sitesLooser } from './sites';
 import { isStarColor, newStarColor } from './sky';
 import { endLock } from './timer';
-import type { Profile, RedirectSettings, Session, SiteLevel, SiteRecipe, SiteRule } from './types';
+import type { OtherSitesLevel, Profile, RedirectSettings, Session, SiteLevel, SiteRecipe, SiteRule } from './types';
 
 // Pure, immutable edits to profiles and sessions. The extension (and later the desktop
 // app) persists whatever these return.
@@ -87,7 +87,7 @@ export function withSessionOverridesSaved(
 export function withRulesEdited(session: Session, edit: (list: Profile[]) => Profile[], now: number): Session {
   const rules = session.rules && edit([session.rules]).find((p) => p.id === session.profileId);
   if (!session.rules || !rules || rules === session.rules) return session;
-  if (endLock(session, now) === 'hard' && sitesLooser(session.rules.sites, rules.sites)) return session;
+  if (endLock(session, now) === 'hard' && sitesLooser(session.rules, rules)) return session;
   return { ...session, rules };
 }
 
@@ -174,9 +174,21 @@ export function withSiteLevel(
 }
 
 /**
+ * Sets what a profile does with every site it doesn't list. Allowed, the default, isn't kept, so
+ * a profile that never changed it stays as it was.
+ */
+export function withOtherSites(profiles: readonly Profile[], profileId: string, level: OtherSitesLevel): Profile[] {
+  return profiles.map((profile) => {
+    if (profile.id !== profileId) return profile;
+    const { otherSites: _previous, ...rest } = profile;
+    return level === 'allowed' ? rest : { ...rest, otherSites: level };
+  });
+}
+
+/**
  * Adds page rules to a site in a profile, or changes the level of ones it already has.
  * Paths are tidied first and invalid ones skipped. A profile with no rule for the site
- * gets one, left at Allowed, so only the pages change.
+ * gets one, at the level every other site has, so only the pages change.
  */
 export function withPathRules(
   profiles: readonly Profile[],
@@ -220,7 +232,10 @@ function samePath(a: string, b: string): boolean {
   return a.toLowerCase() === b.toLowerCase();
 }
 
-/** Applies a change to one site's rule in one profile, adding an Allowed rule first if there isn't one. */
+/**
+ * Applies a change to one site's rule in one profile, first adding one at the level every other
+ * site has if there isn't one.
+ */
 function withSite(
   profiles: readonly Profile[],
   profileId: string,
@@ -230,7 +245,7 @@ function withSite(
   return profiles.map((profile) => {
     if (profile.id !== profileId) return profile;
     const exists = profile.sites.some((site) => site.recipeId === recipeId);
-    const sites = exists ? profile.sites : [...profile.sites, { recipeId, level: 'allowed' as const }];
+    const sites = exists ? profile.sites : [...profile.sites, { recipeId, level: otherSitesLevel(profile) }];
     return { ...profile, sites: sites.map((site) => (site.recipeId === recipeId ? change(site) : site)) };
   });
 }

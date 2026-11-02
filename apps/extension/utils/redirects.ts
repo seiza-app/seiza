@@ -1,4 +1,17 @@
-import { nextPassExpiry, redirectRules, siteRecipes } from '@lock-in/core';
+import {
+  checkOpenPage,
+  findRecipe,
+  localAddresses,
+  nextPassExpiry,
+  otherSitesLevel,
+  redirectRules,
+  sessionProfile,
+  siteFor,
+  siteRecipes,
+  type Profile,
+  type Session,
+  type SiteRecipe,
+} from '@lock-in/core';
 import { recipes } from '@lock-in/recipes';
 
 // Redirects are declarativeNetRequest rules: the browser matches them itself, so no
@@ -17,9 +30,16 @@ export function redirectPageUrl(target: string, options: { expired?: boolean } =
   return `${browser.runtime.getURL('/redirect.html')}${options.expired ? '?expired' : ''}#${target}`;
 }
 
-/** Rebuilds the redirect rules for the current session and schedules the next pass expiry. */
+/**
+ * Rebuilds the redirect rules for the current session and schedules the next pass expiry, and
+ * covers tabs already open on sites the profile keeps away without listing them.
+ */
 export async function syncRedirects(): Promise<void> {
-  const [session, profileList] = await Promise.all([activeSession.getValue(), profiles.getValue()]);
+  const [session, profileList, sites] = await Promise.all([
+    activeSession.getValue(),
+    profiles.getValue(),
+    siteSettings.getValue(),
+  ]);
   const now = Date.now();
 
   const addRules = redirectRules({
@@ -56,6 +76,35 @@ export async function syncRedirects(): Promise<void> {
   const expiry = nextPassExpiry(session, now);
   if (expiry) await browser.alarms.create(passAlarm, { when: expiry });
   else await browser.alarms.clear(passAlarm);
+
+  await coverOtherSiteTabs(session, profileList, siteRecipes(recipes, profileList, sites), now);
+}
+
+/**
+ * Tabs open on a site the profile doesn't list, from before the session started or a pass that
+ * ran out, have no content script to cover them, so they're sent to the Seiza page from here.
+ * Sites with a recipe, built in or added, have the content script (`known`). While every other
+ * site is redirected, this follows the profile's "when a pass runs out" setting, where a pause
+ * becomes the page too.
+ */
+async function coverOtherSiteTabs(
+  session: Session | null,
+  profileList: Profile[],
+  known: readonly SiteRecipe[],
+  now: number,
+): Promise<void> {
+  if (!session || otherSitesLevel(sessionProfile(profileList, session)) === 'allowed') return;
+  const local = new RegExp(localAddresses, 'i');
+  const tabs = await browser.tabs.query({ url: ['http://*/*', 'https://*/*'] });
+  for (const tab of tabs) {
+    if (tab.id === undefined || !tab.url || local.test(tab.url) || findRecipe(known, tab.url)) continue;
+    const site = siteFor(recipes, tab.url);
+    if (!site) continue;
+    const check = checkOpenPage({ url: tab.url, session, profiles: profileList, recipes: [site], now });
+    if (check.action !== 'none') {
+      await browser.tabs.update(tab.id, { url: redirectPageUrl(tab.url, { expired: check.passExpired }) });
+    }
+  }
 }
 
 /** Asks the background to sync and waits until it has. */

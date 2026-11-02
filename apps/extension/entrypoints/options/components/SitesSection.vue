@@ -4,11 +4,13 @@ import {
   findRule,
   hasRoomForOwnSite,
   maxOwnSites,
+  otherSitesLevel,
   ownSiteDomain,
   ownSiteRecipe,
   resolveToggles,
   siteFor,
   siteLevels,
+  type OtherSitesLevel,
   type Profile,
   type SiteLevel,
   type SiteRecipe,
@@ -36,6 +38,28 @@ const listed = computed(() => [...recipes, ...ownSites.value]);
 const reach = useReachable(() => ownSites.value.map((site) => site.name));
 const needsReach = (recipe: SiteRecipe) => !!ownSiteDomain(recipe.id) && !!reach.value && !reach.value.has(recipe.name);
 
+// What happens to every site that isn't listed. Built-in sites are always listed, and one this
+// profile has no rule for follows it too, so that's the level it shows.
+const others = computed(() => otherSitesLevel(props.profile));
+const levelOf = (recipe: SiteRecipe) => findRule(props.profile, recipe.id)?.level ?? others.value;
+
+// Keeping them away needs the browser's OK to reach every site, asked for only then.
+const reachesEverySite = useReachesEverySite();
+const othersNeedReach = computed(() => others.value !== 'allowed' && reachesEverySite.value === false);
+function setOthers(level: SiteLevel) {
+  if (level === 'tamed') return;
+  // The browser only asks straight from a click, so this comes first.
+  if (level !== 'allowed' && !reachesEverySite.value) void askToReachEverySite();
+  void setOtherSites(props.profile.id, level);
+}
+const othersDetail: Record<OtherSitesLevel, string> = {
+  allowed: "Every site that isn't in the list is left alone. Restrict them to let through only the sites you allow.",
+  redirected:
+    "Every site that isn't in the list sends you to Seiza's page first, with a way through for a few minutes. Addresses on this computer or your network always load.",
+  restricted:
+    "Only the sites in the list that aren't restricted get through. Every other site is shut until the session ends. Addresses on this computer or your network always load.",
+};
+
 function setLevel(recipe: SiteRecipe, level: SiteLevel) {
   // The browser only asks straight from a click, so this comes first.
   if (level !== 'allowed' && needsReach(recipe)) void askToReach([recipe.name]);
@@ -60,11 +84,13 @@ const problem = computed(() => {
   if (!hasRoomForOwnSite(props.profile)) return `A profile can have up to ${maxOwnSites} sites of its own.`;
   return '';
 });
+// A site added while every other site is kept away is one to let through.
+const addedLevel = computed(() => (others.value === 'allowed' ? 'redirected' : 'allowed'));
 function add() {
   const site = found.value;
   if (!site || problem.value) return;
-  void askToReach([site.name]);
-  void setSiteLevel(props.profile.id, site.id, 'redirected');
+  if (addedLevel.value !== 'allowed') void askToReach([site.name]);
+  void setSiteLevel(props.profile.id, site.id, addedLevel.value);
   draft.value = '';
 }
 
@@ -86,7 +112,7 @@ const point = (recipeId: string, toggleId?: string) => {
   <p class="help">
     What happens to each site while {{ profile.name }} is running. Page rules give part of a site its own level, like
     redirecting YouTube Shorts while the rest of YouTube is tamed. Any other site can be added by its address at the
-    bottom.
+    bottom, and Every other site sets the rest, so a profile can let through only the sites it allows.
   </p>
   <dl class="card legend">
     <div v-for="level in siteLevels" :key="level.id">
@@ -120,7 +146,7 @@ const point = (recipeId: string, toggleId?: string) => {
         <LevelPicker
           :site-name="recipe.name"
           :can-tame="recipe.toggles.length > 0 || !!ownSiteDomain(recipe.id)"
-          :model-value="findRule(profile, recipe.id)?.level ?? 'allowed'"
+          :model-value="levelOf(recipe)"
           @update:model-value="setLevel(recipe, $event)"
         />
       </div>
@@ -149,6 +175,23 @@ const point = (recipeId: string, toggleId?: string) => {
         />
       </div>
     </li>
+    <li class="others">
+      <div class="site">
+        <span class="name">Every other site</span>
+        <LevelPicker
+          site-name="Every other site"
+          :can-tame="false"
+          tame-detail="There's nothing to tame on sites that aren't listed."
+          :model-value="others"
+          @update:model-value="setOthers"
+        />
+      </div>
+      <p class="detail">{{ othersDetail[others] }}</p>
+      <p v-if="othersNeedReach" class="reach">
+        <span>Seiza can't reach other sites yet, so they're left alone for now.</span>
+        <button type="button" class="text-button" @click="askToReachEverySite()">Let Seiza reach every site</button>
+      </p>
+    </li>
   </ul>
   <form class="add" @submit.prevent="add">
     <input
@@ -161,8 +204,9 @@ const point = (recipeId: string, toggleId?: string) => {
     <p v-if="problem" class="error">{{ problem }}</p>
   </form>
   <p class="help small">
-    Added sites start out redirected. Your browser asks to let Seiza reach each one, and Seiza only uses that to
-    redirect or restrict it during a session.
+    Added sites start out redirected, or allowed while every other site is kept away. Your browser asks to let Seiza
+    reach each one (or every site, to keep away the ones that aren't listed), and Seiza only uses that to redirect or
+    restrict them during a session.
   </p>
 </template>
 
@@ -221,6 +265,17 @@ const point = (recipeId: string, toggleId?: string) => {
 
 .name .text-button {
   margin-left: 4px;
+}
+
+/* Every other site closes the list, set a little apart from the sites above it. */
+.others {
+  border-style: dashed;
+}
+
+.others .detail {
+  margin: 8px 0 0;
+  color: var(--faint);
+  font-size: 12px;
 }
 
 /* A site Seiza can't reach yet, with the way to let it. */

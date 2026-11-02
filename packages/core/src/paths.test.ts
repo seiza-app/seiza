@@ -81,4 +81,12 @@ describe('levels with page rules', () => {
     expect(levelFor(profile, 'x', '/home')).toBe('allowed');
     expect(levelFor(undefined, 'reddit', '/')).toBe('allowed');
   });
+
+  it('treats a site the profile does not list like every other site', () => {
+    expect(levelFor({ ...profile, otherSites: 'restricted' }, 'x', '/home')).toBe('restricted');
+    expect(levelFor({ ...profile, otherSites: 'redirected' }, 'site:a.com')).toBe('redirected');
+    expect(levelFor({ ...profile, otherSites: 'restricted' }, 'reddit', '/settings')).toBe('tamed');
+    // Tamed needs a recipe, so it can't be every other site's level.
+    expect(levelFor({ ...profile, otherSites: 'tamed' as never }, 'x')).toBe('allowed');
+  });
 });

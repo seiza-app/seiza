@@ -1,5 +1,6 @@
+import { otherSitesLevel } from './profiles';
 import { findRecipe } from './recipe';
-import type { Profile, SiteLevel, SiteRecipe, SiteRule, SiteSettings } from './types';
+import type { OtherSitesLevel, Profile, SiteLevel, SiteRecipe, SiteSettings } from './types';
 
 // Sites people add themselves, beyond the built-in recipes: any site, by its address. Each is
 // kept in the profile like any other site, with the address in its id ("site:example.com"), so
@@ -134,16 +135,33 @@ export function isLooser(level: SiteLevel, than: SiteLevel): boolean {
   return strictness[level] < strictness[than];
 }
 
+/** The levels "Every other site" can have, in the same words as `siteLevels`. */
+export const otherSiteLevels = siteLevels.filter(
+  (level): level is { id: OtherSitesLevel; label: string; detail: string } => level.id !== 'tamed',
+);
+
+/** A profile's sites, and what it does with every other one. */
+export type SiteList = Pick<Profile, 'sites' | 'otherSites'>;
+
 /**
- * Whether `after` lets through anything `before` kept away: a site or page at a looser level, or
- * one taken off. A new page rule can't be looser than anything already set on its site. Not
- * allowed during a Hard session (the desktop app checks the same in sites.rs).
+ * Whether `after` lets through anything `before` kept away: a site or page at a looser level, one
+ * taken off (so it's treated like every other site), one added at a looser level than every
+ * other site, or every other site loosened. A new page rule can't be looser than anything
+ * already set on its site. Not allowed during a Hard session (the desktop app checks the same in
+ * sites.rs).
  */
-export function sitesLooser(before: readonly SiteRule[], after: readonly SiteRule[]): boolean {
+export function sitesLooser(before: SiteList, after: SiteList): boolean {
   const samePath = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
-  return before.some((old) => {
-    const kept = after.find((site) => site.recipeId === old.recipeId);
-    const level = kept?.level ?? 'allowed';
+  const othersBefore = otherSitesLevel(before);
+  const othersAfter = otherSitesLevel(after);
+  if (isLooser(othersAfter, othersBefore)) return true;
+
+  const ids = new Set([...before.sites, ...after.sites].map((site) => site.recipeId));
+  return [...ids].some((recipeId) => {
+    // A site that isn't listed is treated like every other site, with no page rules.
+    const old = before.sites.find((site) => site.recipeId === recipeId) ?? { recipeId, level: othersBefore };
+    const kept = after.sites.find((site) => site.recipeId === recipeId);
+    const level = kept?.level ?? othersAfter;
     if (isLooser(level, old.level)) return true;
 
     const oldPages = old.paths ?? [];

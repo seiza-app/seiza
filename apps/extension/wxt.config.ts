@@ -52,7 +52,8 @@ export default defineConfig({
       'scripting',
     ],
     host_permissions: recipeSites,
-    // Sites people add themselves are asked for one at a time, as they're added. Manifest V2
+    // Sites people add themselves are asked for one at a time, as they're added, and every site
+    // only once a profile keeps away the sites it doesn't list ("Every other site"). Manifest V2
     // (Firefox) lists them with the other optional permissions.
     ...(manifestVersion === 2 ? { optional_permissions: ['*://*/*'] } : { optional_host_permissions: ['*://*/*'] }),
     // Redirected visits land on the redirect page. Chrome only allows that if the page the

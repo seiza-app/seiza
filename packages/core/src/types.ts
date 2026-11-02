@@ -54,6 +54,11 @@ export interface Profile {
   id: string;
   name: string;
   sites: SiteRule[];
+  /**
+   * What happens to every site not in `sites`, so a profile can allow only the sites it lists.
+   * Missing, they're allowed.
+   */
+  otherSites?: OtherSitesLevel;
   /** The color of this profile's stars in the night sky, e.g. "#f5c86b". Missing, it falls back to a default. */
   starColor?: string;
   /** The quiet timer, run by the desktop app. Missing fields fall back to its defaults. */
@@ -68,6 +73,9 @@ export interface Profile {
     plan?: string;
   };
 }
+
+/** The levels every other site can have: there's no recipe to tame a site nobody listed. */
+export type OtherSitesLevel = Exclude<SiteLevel, 'tamed'>;
 
 /** What happens to a site's open tabs once its pass runs out. */
 export type PassExpiry = 'nothing' | 'pause' | 'redirect';

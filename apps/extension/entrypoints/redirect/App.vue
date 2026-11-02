@@ -6,6 +6,7 @@ import {
   redirectSettingsFor,
   sessionProfile,
   siteAccess,
+  siteFor,
   siteRecipes,
   waitSecondsFor,
   type PageWait,
@@ -22,7 +23,8 @@ import WhyTap from './components/WhyTap.vue';
 
 // The URL the user was heading to comes after the #. "?expired" means the tab was sent
 // back here because its pass ran out, rather than the user trying to visit again.
-// Which site it is comes from the profiles too, for sites people added themselves.
+// Which site it is comes from the profiles too, for sites people added themselves, or else from
+// its address, for one the profile keeps away without listing it (its "Every other site").
 const target = parseHttpUrl(location.hash.slice(1));
 const recipe = shallowRef<SiteRecipe>();
 const looked = ref(false);
@@ -51,7 +53,7 @@ onMounted(async () => {
   if (!target) return;
 
   const [session, profileList] = await Promise.all([activeSession.getValue(), profiles.getValue()]);
-  const site = findRecipe(siteRecipes(recipes, profileList), target);
+  const site = findRecipe(siteRecipes(recipes, profileList), target) ?? siteFor(recipes, target.href);
   recipe.value = site;
   looked.value = true;
   if (!site) return;

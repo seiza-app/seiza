@@ -2,6 +2,7 @@ import {
   endLock,
   findRule,
   hasRoomForOwnSite,
+  otherSitesLevel,
   ownSiteDomain,
   pageWaitFor,
   redirectSettingsFor,
@@ -12,6 +13,7 @@ import {
   withProfileRemoved,
   withProfilesRemoved,
   withProfileRenamed,
+  withOtherSites,
   withSiteLevel,
   withStarColor,
   withPathRuleRemoved,
@@ -36,6 +38,7 @@ import {
   type Profile,
   type RedirectSettings,
   type SiteSettings,
+  type OtherSitesLevel,
   type SiteLevel,
   type SiteRecipe,
   type WhyReason,
@@ -74,13 +77,14 @@ function editProfiles(edit: (list: Profile[]) => Profile[]): Promise<void> {
 }
 
 /**
- * Changes a profile's sites. While one of its Hard sessions is running they can only get
- * stricter, as in the desktop app; anything looser is left as it was. Resolves to whether it saved.
+ * Changes a profile's sites, or what it does with every other site. While one of its Hard
+ * sessions is running they can only get stricter, as in the desktop app; anything looser is left
+ * as it was. Resolves to whether it saved.
  */
 function editSites(profileId: string, edit: (list: Profile[]) => Profile[]): Promise<boolean> {
   return inTurn(async () => {
     const [session, list] = await Promise.all([activeSession.getValue(), profiles.getValue()]);
-    const sitesOf = (from: Profile[]) => from.find((p) => p.id === profileId)?.sites ?? [];
+    const sitesOf = (from: Profile[]) => from.find((p) => p.id === profileId) ?? { sites: [] };
     const hard = session?.profileId === profileId && endLock(session, Date.now()) === 'hard';
     // The session's own copy too, which a change synced to the desktop app may have left stricter.
     const running = session?.rules ? [session.rules] : [];
@@ -192,9 +196,16 @@ export function setSiteLevel(profileId: string, recipeId: string, level: SiteLev
   return editSites(profileId, (list) => {
     const profile = list.find((p) => p.id === profileId);
     const isNew = !findRule(profile, recipeId);
-    if (isNew && ownSiteDomain(recipeId) && (level === 'allowed' || !hasRoomForOwnSite(profile))) return list;
+    // A site added at the level every other site has would change nothing.
+    const changesNothing = level === otherSitesLevel(profile);
+    if (isNew && ownSiteDomain(recipeId) && (changesNothing || !hasRoomForOwnSite(profile))) return list;
     return withSiteLevel(list, profileId, recipeId, level);
   });
+}
+
+/** Sets what a profile does with every site it doesn't list. */
+export function setOtherSites(profileId: string, level: OtherSitesLevel): Promise<boolean> {
+  return editSites(profileId, (list) => withOtherSites(list, profileId, level));
 }
 
 /** Takes a site someone added off a profile. */
