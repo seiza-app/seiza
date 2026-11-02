@@ -27,15 +27,17 @@ export function linkDesktopApp(): void {
   };
 
   async function sendState(keys: SyncedKey[]) {
-    const [profileList, session, sites, times] = await Promise.all([
+    const [profileList, session, sites, times, basedOn] = await Promise.all([
       profiles.getValue(),
       activeSession.getValue(),
       siteSettings.getValue(),
       syncedAt.getValue(),
+      profilesBasedOn.getValue(),
     ]);
     send({
       type: 'state',
       ...(keys.includes('profiles') && { profiles: { value: profileList, updatedAt: times.profiles } }),
+      ...(keys.includes('profiles') && basedOn !== null && { profilesBasedOn: basedOn }),
       ...(keys.includes('activeSession') && { activeSession: { value: session, updatedAt: times.activeSession } }),
       ...(keys.includes('siteSettings') && {
         siteSettings: { value: sites, updatedAt: times.siteSettings ?? 0 },
@@ -51,6 +53,10 @@ export function linkDesktopApp(): void {
       fromApp.profiles = JSON.stringify(message.profiles.value);
       next.profiles = message.profiles.updatedAt;
       updates.push({ item: profiles, value: message.profiles.value });
+    }
+    // Taken now, or already this side's own, sent back once the app took it.
+    if (message.profiles.updatedAt >= times.profiles) {
+      updates.push({ item: profilesBasedOn, value: message.profiles.updatedAt });
     }
     if (message.activeSession.updatedAt > times.activeSession) {
       fromApp.activeSession = JSON.stringify(message.activeSession.value);

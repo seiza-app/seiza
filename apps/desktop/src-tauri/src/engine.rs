@@ -28,6 +28,7 @@ const TOUR: &str = "tour";
 const UPDATE_OFFERED: &str = "updateOffered";
 const OWN_QUOTES: &str = "ownQuotes";
 const SESSION_GOAL: &str = "sessionGoal";
+const PROFILE_STAMPS: &str = "profileStamps";
 const SITE_SETTINGS: &str = "siteSettings";
 
 /// Emergency passes come back a week after they're used.
@@ -41,6 +42,9 @@ pub struct Engine {
     /// Profiles that were deleted, as they last were, so their stars keep their color and a
     /// session running on one keeps its name.
     deleted_profiles: Vec<Profile>,
+    /// When each profile last changed in the list, by the list's `updated_at`, deleted ones
+    /// included. A list from the extension made before a change here can't undo it.
+    profile_stamps: BTreeMap<String, i64>,
     session: Synced<Option<Session>>,
     settings: Settings,
     /// When each emergency pass was used (epoch ms).
@@ -200,10 +204,22 @@ impl Engine {
             updated_at: 0,
         });
         let deleted_profiles = deleted_profiles(&store)?;
+        // Saved before these were kept, every profile counts as changed when the list last did.
+        let profile_stamps = store.load(PROFILE_STAMPS)?.map_or_else(
+            || {
+                profiles
+                    .value
+                    .iter()
+                    .map(|p| (p.id.clone(), profiles.updated_at))
+                    .collect()
+            },
+            |s| s.value,
+        );
         Ok(Self {
             store,
             profiles,
             deleted_profiles,
+            profile_stamps,
             session,
             settings,
             pass_uses,
@@ -446,11 +462,28 @@ impl Engine {
 
     /// Saves a new version of the list of profiles made here, and notes what changed for sync.
     fn save_profiles(&mut self, profiles: Synced<Vec<Profile>>, now: i64) -> Result<()> {
+        self.replace_profiles(profiles, Some(now))
+    }
+
+    /// Saves a new version of the list of profiles, with when each one changed in it. Changes
+    /// made here are noted for sync as made at `changed_here_at`; ones from sync have none, so
+    /// they aren't sent back.
+    fn replace_profiles(&mut self, profiles: Synced<Vec<Profile>>, changed_here_at: Option<i64>) -> Result<()> {
         let ids = |list: &[Profile]| list.iter().map(|p| p.id.clone()).collect::<Vec<_>>();
         let added_or_deleted = ids(&self.profiles.value) != ids(&profiles.value);
-        self.store
-            .save_profiles(PROFILES, &profiles, &self.profiles.value, now)?;
+        let mut stamps = self.profile_stamps.clone();
+        restamp(&mut stamps, &self.profiles.value, &profiles.value, profiles.updated_at);
+        let stamps = Synced {
+            value: stamps,
+            updated_at: profiles.updated_at,
+        };
+        self.store.save_profiles(
+            (PROFILES, &profiles),
+            (PROFILE_STAMPS, &stamps),
+            changed_here_at.map(|now| (&self.profiles.value[..], now)),
+        )?;
         self.profiles = profiles;
+        self.profile_stamps = stamps.value;
         if added_or_deleted {
             self.deleted_profiles = deleted_profiles(&self.store)?;
         }
@@ -680,6 +713,7 @@ impl Engine {
     pub fn apply_remote(
         &mut self,
         profiles: Option<Synced<Vec<Profile>>>,
+        profiles_based_on: Option<i64>,
         session: Option<Synced<Option<Session>>>,
         now: i64,
     ) -> Result<bool> {
@@ -688,6 +722,15 @@ impl Engine {
         // Nothing can come from the future; a clock that ran ahead mustn't freeze the app's state.
         if let Some(mut incoming) = profiles.filter(|p| p.updated_at.min(now) > self.profiles.updated_at) {
             incoming.updated_at = incoming.updated_at.min(now);
+            if let Some(based_on) = profiles_based_on {
+                let merged =
+                    merge_from_extension(&self.profiles.value, &self.profile_stamps, &incoming.value, based_on);
+                if merged != incoming.value {
+                    incoming.value = merged;
+                    // Newer than the extension's list, so it takes back what it was missing.
+                    incoming.updated_at += 1;
+                }
+            }
             self.save_profiles(incoming, now)?;
             changed = true;
         }
@@ -866,8 +909,7 @@ impl Engine {
                 value: profiles,
                 updated_at: now.max(self.profiles.updated_at + 1),
             };
-            self.store.save(PROFILES, &synced)?;
-            self.profiles = synced;
+            self.replace_profiles(synced, None)?;
         }
         Ok(())
     }
@@ -1049,8 +1091,22 @@ impl Engine {
             value: profiles,
             updated_at: now.max(self.profiles.updated_at + 1),
         };
+        let mut profile_stamps = self.profile_stamps.clone();
         if new_profiles + updated_profiles > 0 {
+            restamp(
+                &mut profile_stamps,
+                &self.profiles.value,
+                &profiles.value,
+                profiles.updated_at,
+            );
             state.push((PROFILES, json(&profiles)?));
+            state.push((
+                PROFILE_STAMPS,
+                json(&Synced {
+                    value: &profile_stamps,
+                    updated_at: profiles.updated_at,
+                })?,
+            ));
             self.store
                 .note_profile_changes(&self.profiles.value, &profiles.value, now)?;
         }
@@ -1132,6 +1188,7 @@ impl Engine {
         let report = self.store.import(&imported_history(backup.history), &state)?;
         if new_profiles + updated_profiles > 0 {
             self.profiles = profiles;
+            self.profile_stamps = profile_stamps;
         }
         if new_quotes > 0 {
             self.own_quotes = quotes;
@@ -1229,6 +1286,46 @@ fn cleaned_name(text: &str) -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
+/// Notes `at` as when each profile that's new, edited or gone between two versions of the list
+/// last changed in it.
+fn restamp(stamps: &mut BTreeMap<String, i64>, before: &[Profile], after: &[Profile], at: i64) {
+    let changed = after
+        .iter()
+        .filter(|p| before.iter().find(|b| b.id == p.id) != Some(*p));
+    let gone = before.iter().filter(|b| !after.iter().any(|p| p.id == b.id));
+    for profile in changed.chain(gone) {
+        stamps.insert(profile.id.clone(), at);
+    }
+}
+
+/// Lays the extension's list of profiles over the one here. `based_on` is the version of this
+/// list the extension last took: what it changed since then wins, but a profile that changed
+/// here after that (from sync, say) stays as it is here, since the extension's list was made
+/// without it. So a profile that arrived as the extension saved its list isn't dropped.
+fn merge_from_extension(
+    here: &[Profile],
+    stamps: &BTreeMap<String, i64>,
+    theirs: &[Profile],
+    based_on: i64,
+) -> Vec<Profile> {
+    let changed_here = |id: &str| stamps.get(id).is_some_and(|&at| at > based_on);
+    let mut merged: Vec<Profile> = theirs
+        .iter()
+        .filter_map(|profile| match here.iter().find(|p| p.id == profile.id) {
+            // Deleted here since.
+            None if changed_here(&profile.id) => None,
+            Some(mine) if changed_here(&profile.id) => Some(mine.clone()),
+            _ => Some(profile.clone()),
+        })
+        .collect();
+    for mine in here {
+        if changed_here(&mine.id) && !theirs.iter().any(|p| p.id == mine.id) {
+            merged.push(mine.clone());
+        }
+    }
+    merged
+}
+
 /// The profiles sync knows were deleted, as they last were.
 fn deleted_profiles(store: &Store) -> Result<Vec<Profile>> {
     Ok(store
@@ -1282,7 +1379,7 @@ mod tests {
             value: fewer,
             updated_at: 2 * MIN,
         };
-        assert!(engine.apply_remote(Some(incoming), None, 2 * MIN).unwrap());
+        assert!(engine.apply_remote(Some(incoming), None, None, 2 * MIN).unwrap());
         let (changed, _) = engine.changed_records(cursor, 100).unwrap();
         assert!(
             matches!(&changed[..], [Record::Profile(p)] if p.id == "writing" && p.deleted
@@ -1733,6 +1830,7 @@ mod tests {
                     updated_at: 50,
                 }),
                 None,
+                None,
                 100,
             )
             .unwrap();
@@ -1744,8 +1842,69 @@ mod tests {
             value: starter_profiles(),
             updated_at: 50,
         };
-        assert!(!engine.apply_remote(Some(stale), None, 100).unwrap());
+        assert!(!engine.apply_remote(Some(stale), None, None, 100).unwrap());
         assert_eq!(engine.snapshot(0).profiles[0].name, "Essays");
+    }
+
+    #[test]
+    fn the_extension_cant_undo_profile_changes_it_hadnt_seen() {
+        let mut engine = engine();
+        let based_on = engine.profiles.updated_at;
+        let theirs = engine.profiles.value.clone();
+        let [first, second, third] = [0, 1, 2].map(|i| theirs[i].id.clone());
+        let (_, cursor) = engine.changed_records(0, 100).unwrap();
+
+        // From other devices: a new profile, an edit to one and the other deleted.
+        engine
+            .apply_records(
+                &[
+                    profile_record("reading", "Reading", false, MIN),
+                    profile_record(&first, "Renamed", false, MIN),
+                    profile_record(&second, "Gone", true, MIN),
+                ],
+                10 * MIN,
+            )
+            .unwrap();
+
+        // Meanwhile the extension added one to the list it had, before it heard of those.
+        let mut added = theirs;
+        added.push(serde_json::from_value(serde_json::json!({ "id": "music", "name": "Music", "sites": [] })).unwrap());
+        let incoming = Synced {
+            value: added,
+            updated_at: 11 * MIN,
+        };
+        assert!(
+            engine
+                .apply_remote(Some(incoming), Some(based_on), None, 12 * MIN)
+                .unwrap()
+        );
+        assert_eq!(
+            profile_ids(&engine),
+            [first.clone(), third, "music".into(), "reading".into()]
+        );
+        assert_eq!(engine.profile_name(&first), "Renamed");
+        // Newer than the extension's, so it takes the ones it was missing.
+        assert_eq!(engine.profiles.updated_at, 11 * MIN + 1);
+        // Only the extension's new one is sent: nothing came back to life or was deleted again.
+        let (changed, _) = engine.changed_records(cursor, 100).unwrap();
+        assert!(matches!(&changed[..], [Record::Profile(p)] if p.id == "music" && !p.deleted));
+
+        // Once it has taken that list, what it changes wins again, deleting included.
+        let based_on = engine.profiles.updated_at;
+        let mut fewer = engine.profiles.value.clone();
+        fewer.retain(|p| p.id != "reading");
+        fewer[0].name = "Essays".into();
+        let incoming = Synced {
+            value: fewer.clone(),
+            updated_at: 13 * MIN,
+        };
+        assert!(
+            engine
+                .apply_remote(Some(incoming), Some(based_on), None, 13 * MIN)
+                .unwrap()
+        );
+        assert_eq!(engine.profiles.value, fewer);
+        assert_eq!(engine.profiles.updated_at, 13 * MIN);
     }
 
     #[test]
@@ -1755,7 +1914,7 @@ mod tests {
             value: Some(remote_session("s1", "writing", None)),
             updated_at: 2_000,
         };
-        assert!(engine.apply_remote(None, Some(incoming), 3_000).unwrap());
+        assert!(engine.apply_remote(None, None, Some(incoming), 3_000).unwrap());
         let (_, session) = engine.synced();
         assert_eq!(session.updated_at, 2_001);
         let value = session.value.as_ref().unwrap();
@@ -1771,7 +1930,7 @@ mod tests {
             value: None,
             updated_at: 1_000 + 30 * MIN,
         };
-        assert!(engine.apply_remote(None, Some(ended), 1_000 + 31 * MIN).unwrap());
+        assert!(engine.apply_remote(None, None, Some(ended), 1_000 + 31 * MIN).unwrap());
         assert_eq!(engine.session(), None);
         let log = engine.session_log().unwrap();
         assert_eq!(log.len(), 1);
@@ -1787,7 +1946,7 @@ mod tests {
             value: None,
             updated_at: 30 * MIN,
         };
-        engine.apply_remote(None, Some(ended), 31 * MIN).unwrap();
+        engine.apply_remote(None, None, Some(ended), 31 * MIN).unwrap();
         assert_eq!(
             engine.session_log().unwrap()[0].goal.as_deref(),
             Some("Draft the intro")
@@ -1799,13 +1958,13 @@ mod tests {
             value: Some(remote_session("s2", "deep-work", None)),
             updated_at: 40 * MIN,
         };
-        engine.apply_remote(None, Some(started), 40 * MIN).unwrap();
+        engine.apply_remote(None, None, Some(started), 40 * MIN).unwrap();
         assert_eq!(engine.snapshot(40 * MIN).session.unwrap().goal, None);
         let ended = Synced {
             value: None,
             updated_at: 50 * MIN,
         };
-        engine.apply_remote(None, Some(ended), 50 * MIN).unwrap();
+        engine.apply_remote(None, None, Some(ended), 50 * MIN).unwrap();
         assert_eq!(engine.snapshot(50 * MIN).goal_to_answer, None);
     }
 
@@ -1818,7 +1977,7 @@ mod tests {
             value: Some(remote_session("s2", "deep-work", timer)),
             updated_at: 5_000,
         };
-        engine.apply_remote(None, Some(replaced), 6_000).unwrap();
+        engine.apply_remote(None, None, Some(replaced), 6_000).unwrap();
         assert_eq!(engine.session().map(|s| s.id.as_str()), Some("s2"));
         assert_eq!(engine.session_log().unwrap().len(), 1);
     }
@@ -1833,7 +1992,7 @@ mod tests {
             value: Some(same),
             updated_at: 2_000,
         };
-        assert!(engine.apply_remote(None, Some(incoming), 3_000).unwrap());
+        assert!(engine.apply_remote(None, None, Some(incoming), 3_000).unwrap());
         assert_eq!(engine.session().map(|s| s.id.clone()), Some(id));
         assert_eq!(engine.session_log().unwrap(), vec![]);
     }
@@ -1845,7 +2004,7 @@ mod tests {
             value: Some(remote_session("s1", "writing", None)),
             updated_at: i64::MAX - 10,
         };
-        engine.apply_remote(None, Some(far_future), 5_000).unwrap();
+        engine.apply_remote(None, None, Some(far_future), 5_000).unwrap();
         assert_eq!(engine.synced().1.updated_at, 5_001);
     }
 
@@ -2040,7 +2199,7 @@ mod tests {
             value: None,
             updated_at: 10 * MIN,
         };
-        assert!(engine.apply_remote(None, Some(ended), 11 * MIN).unwrap());
+        assert!(engine.apply_remote(None, None, Some(ended), 11 * MIN).unwrap());
         let (_, session) = engine.synced();
         assert_eq!(session.value.as_ref().map(|s| s.id.clone()), Some(id));
         // Newer than the browser's change, so the browser takes it back.
@@ -2052,7 +2211,7 @@ mod tests {
             value: None,
             updated_at: 60 * MIN,
         };
-        engine.apply_remote(None, Some(ended), 60 * MIN).unwrap();
+        engine.apply_remote(None, None, Some(ended), 60 * MIN).unwrap();
         assert_eq!(engine.session(), None);
     }
 
@@ -2069,7 +2228,7 @@ mod tests {
             value: Some(softened),
             updated_at: 2_000,
         };
-        engine.apply_remote(None, Some(incoming), 3_000).unwrap();
+        engine.apply_remote(None, None, Some(incoming), 3_000).unwrap();
         let (_, session) = engine.synced();
         let timer = session.value.as_ref().unwrap().timer.as_ref().unwrap();
         assert_eq!((timer.minutes, timer.strictness), (50, Strictness::Hard));
@@ -2220,7 +2379,7 @@ mod tests {
             value: None,
             updated_at: 5 * MIN,
         };
-        engine.apply_remote(None, Some(ended), 5 * MIN).unwrap();
+        engine.apply_remote(None, None, Some(ended), 5 * MIN).unwrap();
         assert_eq!(satellites(&engine), vec![("browser", SatelliteState::Back)]);
     }
 

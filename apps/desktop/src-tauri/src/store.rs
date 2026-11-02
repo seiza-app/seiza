@@ -599,18 +599,21 @@ impl Store {
         Ok(report)
     }
 
-    /// Saves the whole list of profiles under `key`, and notes each one that changed from
-    /// `before` for sync, all in one go.
-    pub fn save_profiles(
+    /// Saves the whole list of profiles and when each one changed in it, each under its key,
+    /// and notes each one that changed from `before` for sync as made here at `now`, all in
+    /// one go. Changes that came from sync have no `before`, so they aren't sent back.
+    pub fn save_profiles<S: Serialize>(
         &mut self,
-        key: &str,
-        profiles: &Synced<Vec<Profile>>,
-        before: &[Profile],
-        now: i64,
+        (key, profiles): (&str, &Synced<Vec<Profile>>),
+        (stamps_key, stamps): (&str, &Synced<S>),
+        changed_here: Option<(&[Profile], i64)>,
     ) -> Result<()> {
         let tx = self.db.transaction()?;
         save(&tx, key, profiles)?;
-        records::note_profile_changes(&tx, before, &profiles.value, now)?;
+        save(&tx, stamps_key, stamps)?;
+        if let Some((before, now)) = changed_here {
+            records::note_profile_changes(&tx, before, &profiles.value, now)?;
+        }
         tx.commit()?;
         Ok(())
     }

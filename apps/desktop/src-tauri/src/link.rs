@@ -66,6 +66,10 @@ pub enum FromExtension {
     /// doesn't know.)
     State {
         profiles: Option<Synced<Vec<Profile>>>,
+        /// The version of the app's profiles (its `updatedAt`) the extension last took, so
+        /// changes the app made after that aren't undone by the extension's list. Missing from
+        /// extensions before 0.1.1.
+        profiles_based_on: Option<i64>,
         active_session: Option<Synced<Option<Session>>>,
         site_settings: Option<Synced<Vec<SiteSettings>>>,
     },
@@ -230,15 +234,18 @@ fn on_message(app: &AppHandle, link_id: u64, line: &str) {
         }
         FromExtension::State {
             profiles,
+            profiles_based_on,
             active_session,
             site_settings,
         } => {
             let now = crate::now_ms();
             let mut engine = crate::engine(app);
-            let changed = engine.apply_remote(profiles, active_session, now).and_then(|changed| {
-                let sites = site_settings.map_or(Ok(false), |s| engine.apply_remote_site_settings(s, now))?;
-                Ok(changed || sites)
-            });
+            let changed = engine
+                .apply_remote(profiles, profiles_based_on, active_session, now)
+                .and_then(|changed| {
+                    let sites = site_settings.map_or(Ok(false), |s| engine.apply_remote_site_settings(s, now))?;
+                    Ok(changed || sites)
+                });
             drop(engine);
             match changed {
                 Ok(true) => crate::changed(app),
@@ -291,10 +298,11 @@ mod tests {
         let state = r#"{"type":"state","profiles":{"value":[{"id":"p","name":"P","sites":[]}],"updatedAt":5},
             "activeSession":{"value":{"id":"s","profileId":"p","startedAt":1,"passes":{}},"updatedAt":6},
             "siteSettings":{"value":[{"recipeId":"reddit","allTheTime":true}],"updatedAt":8},
-            "ownQuotes":{"value":[{"id":"q","text":"Ship it."}],"updatedAt":7}}"#;
+            "ownQuotes":{"value":[{"id":"q","text":"Ship it."}],"updatedAt":7},"profilesBasedOn":4}"#;
         // Quotes from an older extension are skipped.
         let FromExtension::State {
             profiles,
+            profiles_based_on,
             active_session,
             site_settings,
         } = serde_json::from_str(state).unwrap()
@@ -302,6 +310,7 @@ mod tests {
             panic!("not a state message");
         };
         assert_eq!(profiles.unwrap().value[0].name, "P");
+        assert_eq!(profiles_based_on, Some(4));
         assert_eq!(active_session.unwrap().value.unwrap().profile_id, "p");
         assert_eq!(site_settings.unwrap().value[0].all_the_time, Some(true));
 
@@ -310,6 +319,7 @@ mod tests {
             serde_json::from_str(ended).unwrap(),
             FromExtension::State {
                 profiles: None,
+                profiles_based_on: None,
                 active_session: Some(Synced {
                     value: None,
                     updated_at: 9

@@ -7,6 +7,7 @@ import {
   controlPage,
   launch,
   openPopup,
+  setStored,
   stored,
   text,
   until,
@@ -145,6 +146,22 @@ describe('the desktop app link', () => {
     const storage = await stored(control);
     expect(storage.activeSession?.id).toBe('second');
     expect(storage.profiles).toBeUndefined();
+  });
+
+  it("sends its profiles with the app's list they were made from", async () => {
+    const sentAt = Date.now();
+    const fromApp = starterProfiles.map((p, i) => (i === 0 ? { ...p, name: 'Essays' } : p));
+    await app.send({
+      type: 'state',
+      profiles: { value: fromApp, updatedAt: sentAt },
+      activeSession: { value: null, updatedAt: 0 },
+    });
+    await expect.poll(async () => (await stored(control)).profiles?.[0]?.name).toBe('Essays');
+
+    // So the app can keep what it changed after that, rather than this list undoing it.
+    await setStored(control, { profiles: fromApp.map((p, i) => (i === 0 ? { ...p, name: 'Notes' } : p)) });
+    await expect.poll(async () => states(await app.received()).at(-1)?.profiles?.value[0]?.name).toBe('Notes');
+    expect(states(await app.received()).at(-1)?.profilesBasedOn).toBe(sentAt);
   });
 
   it('carries on by itself once the app goes away', async () => {
