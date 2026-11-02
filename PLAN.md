@@ -386,6 +386,26 @@ lock-in/
 - Extension: `pnpm dlx wxt@latest init apps/extension` → template **vue**, package manager pnpm.
 - Packages: `packages/core` (plain TS package; the others depend on it via `workspace:*`). `recipes` and `quotes` start as JSON folders.
 
+### Updates (next; easy, quiet and opt-in)
+Today the extension updates itself through the stores, but updating the app means downloading the new release by hand. The goal is one click, without breaking the promise that the app makes no network requests on its own (`PRIVACY.md`).
+- **Checking is your choice.** Settings › Updates has a **Check now** button and a switch, **Check for updates once a day**. A check is one HTTPS request for `latest.json` on GitHub Releases. Nothing about you goes with it beyond what any web request carries (your IP address, to GitHub).
+- **Shown quietly, never a pop-up.** When a new version is out, the Settings tab gets a small dot, and Settings › Updates shows the version, what's new (the release notes) and **Update and restart**. Between sessions only: during a session the button says it waits until the session ends, since restarting would drop the session's blocking.
+- **How it installs:** Tauri's updater plugin (`tauri-plugin-updater`) downloads the new build, checks its signature against the public key in `tauri.conf.json`, replaces the app and restarts it. macOS gets the universal `.app.tar.gz`, Linux the AppImage in place. The updater can't update a `.deb`: there, Settings says a new version is out and links to the download (an apt repository could come later).
+- **The blocker helper** (§8, Blocking without the extension) is a copy of the app, so after an update it's the old version. The app compares versions and, between sessions, asks to update the helper (macOS asks for the administrator password again). Until then the old helper keeps working.
+- **On the release side:**
+  - A signing key pair from `tauri signer generate`. The private key and its password become GitHub Actions secrets, which you create and add. Keep a backup: losing the key means existing installs can never update again.
+  - `createUpdaterArtifacts: true`, so `release.yml` also uploads the `.app.tar.gz` and AppImage with their `.sig` files.
+  - A step that writes `latest.json` (darwin-aarch64 and darwin-x86_64 both pointing at the universal build, plus linux-x86_64). `releases/latest` only follows published releases, so nothing reaches anyone until the draft is published.
+- **0.1.0 can't update itself.** People on it download the next version once by hand; the release notes and the website say so.
+- **Before shipping:**
+  - Test on a real Mac that an app signed ad hoc and replaced in place still opens without a second **Open Anyway**.
+  - Update `PRIVACY.md`'s Network section.
+  - Check that the plugin's crate and npm package are at least two weeks old.
+- **Later, maybe:** our own Homebrew tap (`brew upgrade`), since the main Homebrew list expects notarized apps.
+- **To decide:**
+  - Whether the daily check is off by default (the most private choice) or offered once on first run, e.g. as a line on the tour's last step.
+  - Whether a check also warns when the linked extension is too old for the app.
+
 ### Sync (later, optional, privacy-preserving)
 - **Local-first always.** Every feature works with no account.
 - **Self-hosted sync:** an open-source `sync-server` (Rust + SQLite, one Docker image).
@@ -490,6 +510,8 @@ Built in slices, one PR each:
   - ✅ The website in `apps/website`, built from mock-up D (`prototypes/website`): the framed home page with the Lock in switch, the four levels, the redirect page, the sky, satellites, privacy and install; Why it works (§12) and Privacy pages; the quiet Ko-fi link in the footer; and a note that sync is planned, free to self-host or hosted for a small fee (§8). Static, served by a Cloudflare Worker deployed from GitHub. Still to do: the domain, store links once the extension is listed, and the community-worlds gallery.
 - Constellation sharing endpoint.
 - Sync between devices (§8, Sync): first a planning session to choose hosting, sign-in and encryption, then stats only, with an offline / hosted / self-hosted choice on first run. Live session sync after.
+
+**Next: easy app updates** (§8, Updates): an opt-in update check, a quiet dot on Settings and one-click Update and restart between sessions; signed update builds and `latest.json` from `release.yml`.
 
 **Later: habit goals** (§7, Habit goals): a planning session first, then the honor system; checked goals once sync reaches a phone.
 
