@@ -87,16 +87,10 @@ usePageSeo({
 
     <section id="network" data-name="Network">
       <p class="kicker mono reveal"><b>05</b> · Network</p>
-      <h2 class="reveal" style="--d: 80ms">One request a day to GitHub, and sync if you want it</h2>
+      <h2 class="reveal" style="--d: 80ms">An update check, and sync if you want it</h2>
       <p class="lede reveal" style="--d: 160ms">
-        The extension makes no network requests. The app checks GitHub once a day for a new version, which you can turn
-        off in Settings › Updates. Otherwise, everything stays on your computer.
-      </p>
-      <p class="reveal" style="--d: 190ms">
-        The update check carries nothing about you, though like any web request it shows GitHub your IP address (<a
-          href="https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement"
-          >GitHub's privacy statement</a
-        >). Updates download from GitHub too, and the app checks their signature before installing them.
+        The extension makes no network requests. The app checks once a day for a new version, which you can turn off in
+        Settings › Updates. Otherwise, everything stays on your computer.
       </p>
       <SyncNote class="reveal" style="--d: 220ms" />
     </section>
