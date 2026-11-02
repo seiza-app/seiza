@@ -13,6 +13,7 @@ import {
 import { recipes } from '@lock-in/recipes';
 import { computed, onUnmounted, ref } from 'vue';
 import EndEarly from '@/components/EndEarly.vue';
+import SeizaWordmark from '@/components/SeizaWordmark.vue';
 import SiteToggles from '@/components/SiteToggles.vue';
 
 const session = useStorageItem(activeSession);
@@ -81,7 +82,7 @@ function start(profile: Profile) {
 <template>
   <main>
     <header>
-      <h1 class="mono"><span aria-hidden="true">✦ </span>Seiza</h1>
+      <h1><SeizaWordmark /></h1>
       <span v-if="linked" class="linked mono" title="Sessions stay in step with the Seiza app">
         <span class="dot" aria-hidden="true" />App linked
       </span>
@@ -163,12 +164,9 @@ header {
 
 h1 {
   margin: 0;
-  color: var(--starlight);
-  font-weight: 400;
-  letter-spacing: 0.22em;
+  font-size: 22px;
 }
 
-h1 span,
 .star {
   color: var(--glow);
 }

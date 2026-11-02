@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import { maxProfileNameLength, starColorFor } from '@lock-in/core';
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import SeizaWordmark from '@/components/SeizaWordmark.vue';
 import StarColorPicker from '@/components/StarColorPicker.vue';
 import NoSessionSection from './components/NoSessionSection.vue';
 import RedirectSection from './components/RedirectSection.vue';
@@ -114,7 +115,7 @@ onMounted(() => {
 <template>
   <main>
     <header>
-      <p class="brand mono"><span class="star" aria-hidden="true">✦ </span>Seiza</p>
+      <p class="brand"><SeizaWordmark /></p>
       <h1>Settings</h1>
       <p class="help intro">
         A profile is a set of rules for a focus session: which sites stay as they are, which are tamed, and which are
@@ -293,13 +294,7 @@ main {
 
 .brand {
   margin: 0;
-  color: var(--starlight);
-  font-size: 11px;
-  letter-spacing: 0.22em;
-}
-
-.star {
-  color: var(--glow);
+  font-size: 24px;
 }
 
 h1 {

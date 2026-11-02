@@ -79,6 +79,7 @@ import NightSky, {
   type SkyStar,
 } from './components/NightSky.vue';
 import ProfileList from './components/ProfileList.vue';
+import SeizaWordmark from './components/SeizaWordmark.vue';
 import SettingsView from './components/SettingsView.vue';
 import SkyPage from './components/SkyPage.vue';
 import TourGuide, { type TourStep } from './components/TourGuide.vue';
@@ -464,7 +465,7 @@ async function run(action: () => Promise<void>) {
     <!-- Explore clears the header away too, so the sky is on its own. -->
     <header :class="{ away: exploring }" :inert="exploring">
       <div class="row">
-        <h1 class="mono"><span aria-hidden="true">✦ </span>Seiza</h1>
+        <h1><SeizaWordmark /></h1>
         <span class="mono" title="Each session adds a star, and every focused minute earns stardust" data-tour="sky">
           Stars <b>{{ String(starCount).padStart(3, '0') }}</b> · Stardust <b>{{ totalStardust.toLocaleString() }}</b>
         </span>
@@ -603,9 +604,7 @@ header.away {
 
 h1 {
   margin: 0;
-  color: var(--starlight);
-  font-weight: 400;
-  letter-spacing: 0.22em;
+  font-size: 22px;
 }
 
 .tabs {

@@ -14,6 +14,7 @@ import {
 } from '@lock-in/core';
 import { recipes } from '@lock-in/recipes';
 import { computed, onMounted, ref, shallowRef, watch } from 'vue';
+import SeizaWordmark from '@/components/SeizaWordmark.vue';
 import BlockedCard from './components/BlockedCard.vue';
 import WaitCard from './components/WaitCard.vue';
 import WhyTap from './components/WhyTap.vue';
@@ -122,9 +123,9 @@ function ordinal(n: number): string {
 
 <template>
   <main>
-    <p class="brand mono">
-      <span class="star" aria-hidden="true">✦ </span>Seiza<template v-if="profileName">
-        · <b>{{ profileName }}</b></template
+    <p class="brand">
+      <SeizaWordmark /><span v-if="profileName" class="mono"
+        >· <b>{{ profileName }}</b></span
       >
     </p>
 
@@ -175,13 +176,16 @@ main {
 }
 
 .brand {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
   margin: 0 0 36px;
-  color: var(--starlight);
-  letter-spacing: 0.22em;
+  font-size: 24px;
 }
 
-.star {
-  color: var(--glow);
+.brand .mono {
+  font-size: 11px;
+  letter-spacing: 0.22em;
 }
 
 /* How many tries today, as a small readout with a glowing dot. */

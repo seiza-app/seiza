@@ -393,9 +393,10 @@ const empty = computed(() => !focus.value?.sessions && !distractions.value?.visi
       </div>
     </Unfold>
 
-    <!-- Weeks slide in from the side of the arrow that was pressed. -->
+    <!-- Weeks slide in from the side of the arrow that was pressed, in a dark frame like Settings'
+         so the reading stays clear over the sky. -->
     <Transition :name="slide" mode="out-in">
-      <div :key="report?.start ?? 'loading'">
+      <div :key="report?.start ?? 'loading'" :class="{ 'card panel report': report || error }">
         <p v-if="error" class="error" role="alert">{{ error }}</p>
         <p v-else-if="report && empty" class="mono empty">
           Nothing logged
@@ -687,6 +688,11 @@ const empty = computed(() => !focus.value?.sessions && !distractions.value?.visi
 }
 
 /* One long readout, with hairlines between its numbered sections. */
+.report {
+  margin-top: 12px;
+  padding: 0 14px;
+}
+
 .read {
   padding: 14px 0;
   border-bottom: 1px solid var(--line);
@@ -925,11 +931,12 @@ p {
 }
 
 .empty {
-  margin-top: 24px;
+  padding: 18px 0;
   text-align: center;
 }
 
 .error {
+  padding: 14px 0;
   color: #f0a3a3;
   font-size: 12px;
 }

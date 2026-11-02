@@ -57,7 +57,7 @@ describe('redirects and the redirect page', () => {
     expect(await gateText()).toContain('Focus for 3 seconds first');
     expect(await gateText()).toContain('If you still want Reddit after that, go right ahead.');
     expect(await gateText()).toContain('First try at Reddit today');
-    expect(await gateText()).toContain('SEIZA · DEEP WORK');
+    expect(await gateText()).toContain('· DEEP WORK');
   });
 
   it('counts each attempt', async () => {
