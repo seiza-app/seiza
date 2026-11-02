@@ -1,6 +1,6 @@
 // Settings › Sync (PLAN §8, Sync): starting a sync group, joining one or adding a device with a
 // pairing code, the group's devices, leaving, and moving to another server. Sending and fetching
-// records comes next (build step 5).
+// records is in exchange.rs.
 //
 // A pairing runs in the background for up to its five minutes, asking the server for the other
 // computer's messages once a second. That's the only time sync asks over and over; it tells the
@@ -37,6 +37,9 @@ pub struct SyncStatus {
     pub device_name: String,
     /// When this computer last sent or fetched (epoch ms).
     pub last_synced_at: Option<i64>,
+    /// Why it last stopped syncing early, if the server or this app said why (being offline
+    /// isn't shown, beyond when it last synced).
+    pub problem: Option<String>,
     /// Whether this computer has sessions of its own, whose rare events and comets are drawn
     /// again when it joins a group and takes the group's sky.
     pub own_sessions: bool,
@@ -123,15 +126,21 @@ pub fn status(app: &AppHandle) -> Result<SyncStatus> {
     Ok(SyncStatus {
         server: settings.as_ref().map(|s| s.server.clone()),
         device_name: settings.as_ref().map_or_else(computer_name, |s| s.device_name.clone()),
+        problem: settings.as_ref().and_then(|_| super::exchange::problem(app)),
         last_synced_at: settings.and_then(|s| s.last_synced_at),
         own_sessions,
     })
 }
 
-fn sync_changed(app: &AppHandle) {
+/// Tells Settings › Sync how sync is going.
+pub(super) fn emit_status(app: &AppHandle) {
     if let Ok(status) = status(app) {
         let _ = app.emit("sync", status);
     }
+}
+
+fn sync_changed(app: &AppHandle) {
+    emit_status(app);
     crate::changed(app);
 }
 
@@ -311,6 +320,11 @@ async fn settle(app: &AppHandle, client: &Client, settings: SyncSettings, sky: O
             .and_then(|_| engine.resend_all_records())
     };
     sync_changed(app);
+    if sky.is_some() {
+        // The Sky draws its rare events and comets with the group's secret now.
+        let _ = app.emit("synced", ());
+    }
+    super::exchange::fetch(app);
     rest
 }
 
@@ -329,7 +343,11 @@ fn forget(app: &AppHandle, settings: &SyncSettings) -> Result<()> {
 
 /// A request made with this computer's token, which stops sync here if the server no longer
 /// knows it.
-fn signed_in<T>(app: &AppHandle, settings: &SyncSettings, result: std::result::Result<T, ClientError>) -> Result<T> {
+pub(super) fn signed_in<T>(
+    app: &AppHandle,
+    settings: &SyncSettings,
+    result: std::result::Result<T, ClientError>,
+) -> Result<T> {
     match result {
         Err(error) if error.is_signed_out() => {
             stop_pairing(app);
@@ -617,6 +635,7 @@ pub async fn move_server(app: &AppHandle, address: &str, invite: Option<&str>) -
     // On the new server now, whatever happens next.
     let resent = crate::engine(app).resend_all_records();
     sync_changed(app);
+    super::exchange::fetch(app);
     // Leaves the old group if its server still answers. If it doesn't, there's nothing to tidy.
     if let Ok(old_client) = Client::new(&old.server) {
         let _ = old_client.remove_device(&old.token, &old.device_id).await;

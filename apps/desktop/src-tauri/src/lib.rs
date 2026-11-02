@@ -75,12 +75,14 @@ pub(crate) fn start_session(app: &AppHandle, profile_id: &str, goal: Option<&str
         }
     }
     changed(app);
+    sync::exchange::fetch(app);
     Ok(())
 }
 
 pub(crate) fn end_session(app: &AppHandle, reason: EndReason) -> Result<()> {
     engine(app).end_session(now_ms(), reason)?;
     changed(app);
+    sync::exchange::fetch(app);
     Ok(())
 }
 
@@ -93,8 +95,8 @@ pub(crate) fn satellites_changed(app: &AppHandle) {
     }
 }
 
-/// Tells the window and the menu bar about a change, and schedules the session's timer, idle
-/// check, and its check on browsers and apps.
+/// Tells the window and the menu bar about a change, schedules the session's timer, idle
+/// check, and its check on browsers and apps, and sends whatever changed to the sync group.
 pub(crate) fn changed(app: &AppHandle) {
     // Copy what's needed and let go of the engine first, so the menu bar (which runs on the
     // main thread) never waits on a lock another thread holds.
@@ -116,6 +118,7 @@ pub(crate) fn changed(app: &AppHandle) {
     wake_watch(app);
     sync_blocker(app);
     schedule_timer(app, session, snapshot.session.map(|s| s.profile_name));
+    sync::exchange::send(app);
 }
 
 /// The running session's check on its browsers and apps, and the session it's for.
@@ -470,8 +473,10 @@ const ALERT_SOUND: &str = "Glass";
 #[cfg(not(target_os = "macos"))]
 const ALERT_SOUND: &str = "default";
 
-/// Opens the window, or brings it to the front if it's already open.
+/// Opens the window, or brings it to the front if it's already open, and fetches what the sync
+/// group's other computers sent meanwhile.
 pub(crate) fn open_window(app: &AppHandle) -> Result<()> {
+    sync::exchange::fetch(app);
     if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
         window.unminimize()?;
         window.show()?;
@@ -538,6 +543,7 @@ pub fn run() {
             app.manage(capture::Paused::default());
             app.manage(updates::Updates::default());
             app.manage(sync::setup::Pairings::default());
+            app.manage(sync::exchange::Exchanges::default());
 
             tray::create(app.handle(), &snapshot)?;
             capture::listen(app.handle());

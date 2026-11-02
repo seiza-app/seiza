@@ -28,14 +28,16 @@ pub enum ClientError {
 }
 
 impl ClientError {
-    /// This device's token is no longer known, e.g. because another device removed it.
+    /// This device's token is no longer known, e.g. because another device removed it. Only the
+    /// sync server's own answer counts, not a 401 from a proxy in front of it (say, one that
+    /// wants a sign-in), which would otherwise turn sync off here.
     pub fn is_signed_out(&self) -> bool {
         matches!(
             self,
             ClientError::Refused {
                 status: StatusCode::UNAUTHORIZED,
-                ..
-            }
+                message,
+            } if message == "unknown device"
         )
     }
 }
@@ -78,18 +80,14 @@ pub struct Devices {
     pub you: String,
 }
 
-// Batches are sent and fetched from build step 5 on.
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct Batch {
     pub seq: i64,
     pub device_id: String,
     /// Sealed (`GroupKey::open` with `Purpose::Batch`).
     pub data: Vec<u8>,
-    pub created_at: i64,
 }
 
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct Batches {
     pub batches: Vec<Batch>,
@@ -184,7 +182,6 @@ impl Client {
     }
 
     /// Adds a sealed batch, returning its place in the group's order.
-    #[allow(dead_code)]
     pub async fn upload_batch(&self, token: &str, sealed: Vec<u8>) -> Result<i64> {
         #[derive(Deserialize)]
         struct Seq {
@@ -199,7 +196,6 @@ impl Client {
     }
 
     /// The group's batches after `after`, in order, a page at a time.
-    #[allow(dead_code)]
     pub async fn batches_after(&self, token: &str, after: i64) -> Result<Batches> {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
@@ -207,7 +203,6 @@ impl Client {
             seq: i64,
             device_id: String,
             data: String,
-            created_at: i64,
         }
         #[derive(Deserialize)]
         struct Page {
@@ -224,7 +219,6 @@ impl Client {
                     seq: batch.seq,
                     device_id: batch.device_id,
                     data: STANDARD.decode(batch.data).map_err(|_| ClientError::Unexpected)?,
-                    created_at: batch.created_at,
                 })
             })
             .collect::<Result<_>>()?;
@@ -347,6 +341,18 @@ mod tests {
     use super::*;
     use crate::sync::crypto::{GroupKey, Purpose};
     use crate::sync::pairing::{Code, Host, Joiner};
+
+    #[test]
+    fn only_the_sync_server_signs_a_device_out() {
+        let refused = |status, message: &str| ClientError::Refused {
+            status,
+            message: message.into(),
+        };
+        assert!(refused(StatusCode::UNAUTHORIZED, "unknown device").is_signed_out());
+        // A proxy in front of the server that wants a sign-in, say.
+        assert!(!refused(StatusCode::UNAUTHORIZED, "Unauthorized").is_signed_out());
+        assert!(!refused(StatusCode::FORBIDDEN, "unknown device").is_signed_out());
+    }
 
     #[test]
     fn path_segments_stay_one_segment() {
