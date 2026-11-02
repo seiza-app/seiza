@@ -576,15 +576,27 @@ const glowHelp = computed(() => {
   order: -1;
 }
 
-/* Numbered sections with hairlines between them, like the weekly report. */
+/* Numbered sections, like the weekly report's. Their fields have dashed lines between them, so
+   each section starts with room above it and a heading that trails off in a ruled line of the
+   glow color, which reads as a new part at a glance. */
 .read {
-  padding: 14px 0 4px;
-  border-bottom: 1px solid var(--line);
+  padding: 22px 0 4px;
 }
 
 h2 {
-  margin: 0 0 2px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 4px;
+  color: var(--dim);
   font-weight: 400;
+}
+
+h2::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--tick), transparent);
 }
 
 .faint {

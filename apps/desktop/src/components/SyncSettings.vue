@@ -393,13 +393,23 @@ const left = computed(() => {
 <style scoped>
 /* Laid out like the other sections in Settings (SettingsView.vue). */
 .read {
-  padding: 14px 0 4px;
-  border-bottom: 1px solid var(--line);
+  padding: 22px 0 4px;
 }
 
 h2 {
-  margin: 0 0 2px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 4px;
+  color: var(--dim);
   font-weight: 400;
+}
+
+h2::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--tick), transparent);
 }
 
 .faint {
