@@ -127,7 +127,9 @@ fn local(host: &str) -> bool {
         Ok(IpAddr::V6(ip)) => ip.is_loopback() || ip.is_unique_local() || ip.is_unicast_link_local(),
         Err(_) => {
             let name = host.to_ascii_lowercase();
-            name == "localhost" || name.ends_with(".localhost") || name.ends_with(".local") || name.ends_with(".lan")
+            // `.local` names are answered on the local network itself (mDNS), so no outside DNS
+            // can point them elsewhere.
+            name == "localhost" || name.ends_with(".localhost") || name.ends_with(".local")
         }
     }
 }
@@ -186,6 +188,7 @@ mod tests {
     fn plain_http_stays_on_the_local_network() {
         assert_eq!(server_address("http://sync.example.com"), Err(BadAddress::NotHttps));
         assert_eq!(server_address("http://8.8.8.8"), Err(BadAddress::NotHttps));
+        assert_eq!(server_address("http://router.lan"), Err(BadAddress::NotHttps));
     }
 
     #[test]

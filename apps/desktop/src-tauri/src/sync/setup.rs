@@ -95,6 +95,9 @@ pub struct Pairings(Mutex<Current>);
 
 #[derive(Default)]
 struct Current {
+    /// Counts pairings, so one that's been stopped or replaced can't change what the window
+    /// shows or end the one after it.
+    generation: u64,
     state: PairingState,
     task: Option<JoinHandle<()>>,
     /// The pairing on the server, to end it if this one stops: the client, this side's key and
@@ -136,18 +139,23 @@ pub fn pairing(app: &AppHandle) -> PairingState {
     current(app).state.clone()
 }
 
-fn show(app: &AppHandle, state: PairingState) {
-    current(app).state = state.clone();
-    let _ = app.emit("sync-pairing", state);
+/// Shows how pairing `generation` is going, unless another has taken its place.
+fn show(app: &AppHandle, generation: u64, state: PairingState) {
+    let mut current = current(app);
+    if current.generation == generation {
+        current.state = state.clone();
+        let _ = app.emit("sync-pairing", state);
+    }
 }
 
 /// Stops the pairing that's running, if one is, and ends it on the server so its code can't be
-/// used.
-pub fn stop_pairing(app: &AppHandle) {
-    let (task, open) = {
+/// used. Returns the next pairing's generation.
+fn take_over(app: &AppHandle) -> u64 {
+    let (task, open, generation) = {
         let mut current = current(app);
+        current.generation += 1;
         current.answer = None;
-        (current.task.take(), current.open.take())
+        (current.task.take(), current.open.take(), current.generation)
     };
     if let Some(task) = task {
         task.abort();
@@ -157,17 +165,34 @@ pub fn stop_pairing(app: &AppHandle) {
             let _ = client.end_pairing(&key, &slot).await;
         });
     }
-    show(app, PairingState::Idle);
+    generation
 }
 
-/// Runs one side of a pairing in the background. One that fails is ended on the server, so its
-/// code gets one try.
-fn run(
-    app: &AppHandle,
-    open: (Client, String, String),
-    pairing: impl Future<Output = Result<PairingState>> + Send + 'static,
-) {
-    current(app).open = Some(open);
+pub fn stop_pairing(app: &AppHandle) {
+    let generation = take_over(app);
+    show(app, generation, PairingState::Idle);
+}
+
+/// Notes where pairing `generation` is open on the server, so stopping it ends it there. If
+/// another pairing has taken its place meanwhile, ends this one there instead.
+fn claim(app: &AppHandle, generation: u64, open: (Client, String, String)) -> bool {
+    {
+        let mut current = current(app);
+        if current.generation == generation {
+            current.open = Some(open);
+            return true;
+        }
+    }
+    let (client, key, slot) = open;
+    tauri::async_runtime::spawn(async move {
+        let _ = client.end_pairing(&key, &slot).await;
+    });
+    false
+}
+
+/// Runs one side of pairing `generation` in the background. One that fails is ended on the
+/// server, so its code gets one try.
+fn run(app: &AppHandle, generation: u64, pairing: impl Future<Output = Result<PairingState>> + Send + 'static) {
     let handle = app.clone();
     let task = tauri::async_runtime::spawn(async move {
         let state = pairing.await.unwrap_or_else(|problem| PairingState::Failed {
@@ -175,6 +200,9 @@ fn run(
         });
         let open = {
             let mut current = current(&handle);
+            if current.generation != generation {
+                return;
+            }
             current.task = None;
             current.answer = None;
             current.open.take()
@@ -182,9 +210,14 @@ fn run(
         if let (PairingState::Failed { .. }, Some((client, key, slot))) = (&state, open) {
             let _ = client.end_pairing(&key, &slot).await;
         }
-        show(&handle, state);
+        show(&handle, generation, state);
     });
-    current(app).task = Some(task);
+    let mut current = current(app);
+    if current.generation == generation {
+        current.task = Some(task);
+    } else {
+        task.abort();
+    }
 }
 
 fn ran_out() -> Error {
@@ -200,11 +233,12 @@ async fn wait(deadline: Instant) -> Result<()> {
     Ok(())
 }
 
-/// A pairing the server no longer has.
+/// A pairing the server no longer has: once one ends or runs out, the server knows neither side's
+/// key for it.
 fn ended(error: ClientError) -> Error {
     match error {
         ClientError::Refused {
-            status: StatusCode::NOT_FOUND,
+            status: StatusCode::NOT_FOUND | StatusCode::UNAUTHORIZED,
             ..
         } => Error::Sync(
             "the pairing ended before it finished: the code ran out or was typed wrong, or the other computer stopped \
@@ -212,6 +246,21 @@ fn ended(error: ClientError) -> Error {
                 .into(),
         ),
         other => other.into(),
+    }
+}
+
+/// What one of a pairing's once-a-second questions got, or `None` to ask again after a passing
+/// problem (offline for a moment, or the server busy), until the pairing's time is up.
+fn polled<T>(answer: std::result::Result<T, ClientError>) -> Result<Option<T>> {
+    match answer {
+        Ok(answer) => Ok(Some(answer)),
+        Err(ClientError::Offline(_)) => Ok(None),
+        Err(ClientError::Refused { status, .. })
+            if status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error() =>
+        {
+            Ok(None)
+        }
+        Err(other) => Err(ended(other)),
     }
 }
 
@@ -242,25 +291,27 @@ fn settings(app: &AppHandle) -> Result<SyncSettings> {
 /// on it to be sent there. If it got into another group meanwhile (two clicks at once), the new
 /// place is given up again.
 async fn settle(app: &AppHandle, client: &Client, settings: SyncSettings, sky: Option<&str>) -> Result<()> {
+    let now = crate::now_ms();
     let saved = {
-        let mut engine = crate::engine(app);
-        let now = crate::now_ms();
-        if engine.sync_settings()?.is_some() {
-            Err(Error::AlreadySyncing)
-        } else {
-            engine.set_sync_settings(Some(&settings), now)?;
-            if let Some(sky) = sky {
-                engine.match_sky(sky, now)?;
-            }
-            engine.resend_all_records()
+        let engine = crate::engine(app);
+        match engine.sync_settings() {
+            Ok(None) => engine.set_sync_settings(Some(&settings), now),
+            Ok(Some(_)) => Err(Error::AlreadySyncing),
+            Err(error) => Err(error),
         }
     };
-    if let Err(Error::AlreadySyncing) = saved {
+    if saved.is_err() {
         let _ = client.remove_device(&settings.token, &settings.device_id).await;
+        return saved;
     }
-    saved?;
+    // In the group now, whatever happens next.
+    let rest = {
+        let mut engine = crate::engine(app);
+        sky.map_or(Ok(()), |sky| engine.match_sky(sky, now))
+            .and_then(|_| engine.resend_all_records())
+    };
     sync_changed(app);
-    Ok(())
+    rest
 }
 
 /// Turns sync off here after this computer's token stopped working, which means another one
@@ -309,18 +360,25 @@ pub async fn start_group(app: &AppHandle, address: &str, name: &str, invite: Opt
 pub async fn add_device(app: &AppHandle) -> Result<PairingState> {
     let settings = settings(app)?;
     let key = settings.group_key().ok_or(Error::NotSyncing)?;
-    stop_pairing(app);
+    let generation = take_over(app);
     let client = Client::new(&settings.server)?;
     let opened = client.open_pairing(&settings.token).await;
     let pairing = signed_in(app, &settings, opened)?;
+    let open = (client.clone(), settings.token.clone(), pairing.slot.clone());
+    if !claim(app, generation, open) {
+        return Ok(self::pairing(app));
+    }
     let code = Code::new(&pairing.slot);
     let showing = PairingState::Showing {
         code: code.to_string(),
         expires_at: pairing.expires_at,
     };
-    show(app, showing.clone());
-    let open = (client.clone(), settings.token.clone(), pairing.slot);
-    run(app, open, host(app.clone(), client, settings, key, code));
+    show(app, generation, showing.clone());
+    run(
+        app,
+        generation,
+        host(app.clone(), generation, client, settings, key, code),
+    );
     Ok(showing)
 }
 
@@ -328,6 +386,7 @@ pub async fn add_device(app: &AppHandle) -> Result<PairingState> {
 /// asks its person, then sends the welcome and lets the new one in.
 async fn host(
     app: AppHandle,
+    generation: u64,
     client: Client,
     settings: SyncSettings,
     key: GroupKey,
@@ -335,14 +394,17 @@ async fn host(
 ) -> Result<PairingState> {
     let deadline = Instant::now() + PAIRING;
     let (token, slot) = (settings.token.as_str(), code.slot());
-    while !client.messages(token, slot, 0).await.map_err(ended)?.joined {
+    loop {
+        if polled(client.messages(token, slot, 0).await)?.is_some_and(|inbox| inbox.joined) {
+            break;
+        }
         wait(deadline).await?;
     }
     let (host, hello) = Host::start(&code, &settings.group_id);
     client.send_message(token, slot, hello).await.map_err(ended)?;
     let reply = loop {
-        let inbox = client.messages(token, slot, 0).await.map_err(ended)?;
-        if let Some(reply) = inbox.messages.into_iter().next() {
+        let inbox = polled(client.messages(token, slot, 0).await)?;
+        if let Some(reply) = inbox.and_then(|inbox| inbox.messages.into_iter().next()) {
             break reply;
         }
         wait(deadline).await?;
@@ -357,9 +419,16 @@ async fn host(
     })?;
 
     let (answer, answered) = oneshot::channel();
-    current(&app).answer = Some(answer);
+    {
+        let mut current = current(&app);
+        if current.generation != generation {
+            return Ok(PairingState::Idle);
+        }
+        current.answer = Some(answer);
+    }
     show(
         &app,
+        generation,
         PairingState::Asking {
             device_name: checked.device_name.clone(),
         },
@@ -401,7 +470,7 @@ pub async fn join(app: &AppHandle, address: &str, code: &str, name: &str) -> Res
     let name = device_name(name);
     let client = Client::new(&server)?;
     reach(&client).await?;
-    stop_pairing(app);
+    let generation = take_over(app);
     let joined = client.join_pairing(code.slot()).await.map_err(|error| match error {
         ClientError::Refused {
             status: StatusCode::NOT_FOUND,
@@ -411,13 +480,13 @@ pub async fn join(app: &AppHandle, address: &str, code: &str, name: &str) -> Res
         ),
         other => other.into(),
     })?;
-    show(app, PairingState::Checking);
     let open = (client.clone(), joined.joiner_key.clone(), code.slot().to_owned());
-    run(
-        app,
-        open,
-        joiner(app.clone(), client, server, code, joined.joiner_key, name),
-    );
+    if !claim(app, generation, open) {
+        return Ok(pairing(app));
+    }
+    show(app, generation, PairingState::Checking);
+    let joining = joiner(app.clone(), generation, client, server, code, joined.joiner_key, name);
+    run(app, generation, joining);
     Ok(PairingState::Checking)
 }
 
@@ -425,6 +494,7 @@ pub async fn join(app: &AppHandle, address: &str, code: &str, name: &str) -> Res
 /// then takes the group's key and sky and collects its own token.
 async fn joiner(
     app: AppHandle,
+    generation: u64,
     client: Client,
     server: String,
     code: Code,
@@ -434,8 +504,8 @@ async fn joiner(
     let deadline = Instant::now() + PAIRING;
     let slot = code.slot();
     let hello = loop {
-        let inbox = client.messages(&key, slot, 0).await.map_err(ended)?;
-        if let Some(hello) = inbox.messages.into_iter().next() {
+        let inbox = polled(client.messages(&key, slot, 0).await)?;
+        if let Some(hello) = inbox.and_then(|inbox| inbox.messages.into_iter().next()) {
             break hello;
         }
         wait(deadline).await?;
@@ -443,18 +513,18 @@ async fn joiner(
     let (joiner, reply) = Joiner::reply(&code, &hello, &name).map_err(pairing_problem)?;
     let group_id = joiner.group_id().to_owned();
     client.send_message(&key, slot, reply).await.map_err(ended)?;
-    show(&app, PairingState::Waiting);
+    show(&app, generation, PairingState::Waiting);
 
     let welcome = loop {
-        let inbox = client.messages(&key, slot, 1).await.map_err(ended)?;
-        if let Some(welcome) = inbox.messages.into_iter().next() {
+        let inbox = polled(client.messages(&key, slot, 1).await)?;
+        if let Some(welcome) = inbox.and_then(|inbox| inbox.messages.into_iter().next()) {
             break welcome;
         }
         wait(deadline).await?;
     };
     let welcomed = joiner.finish(&welcome).map_err(pairing_problem)?;
     let membership = loop {
-        if let Some(membership) = client.collect_device(&key, slot).await.map_err(ended)? {
+        if let Some(membership) = polled(client.collect_device(&key, slot).await)?.flatten() {
             break membership;
         }
         wait(deadline).await?;
@@ -533,22 +603,50 @@ pub async fn move_server(app: &AppHandle, address: &str, invite: Option<&str>) -
         ..SyncSettings::new(server, membership, &key, old.device_name.clone())
     };
     let saved = {
-        let mut engine = crate::engine(app);
-        if engine.sync_settings()?.as_ref() == Some(&old) {
-            engine.set_sync_settings(Some(&new), crate::now_ms())?;
-            engine.resend_all_records()
-        } else {
-            Err(Error::Sync("sync changed on this computer meanwhile; try again".into()))
+        let engine = crate::engine(app);
+        match engine.sync_settings() {
+            Ok(Some(now)) if now == old => engine.set_sync_settings(Some(&new), crate::now_ms()),
+            Ok(_) => Err(Error::Sync("sync changed on this computer meanwhile; try again".into())),
+            Err(error) => Err(error),
         }
     };
     if saved.is_err() {
         let _ = client.remove_device(&new.token, &new.device_id).await;
+        return saved;
     }
-    saved?;
+    // On the new server now, whatever happens next.
+    let resent = crate::engine(app).resend_all_records();
     sync_changed(app);
     // Leaves the old group if its server still answers. If it doesn't, there's nothing to tidy.
     if let Ok(old_client) = Client::new(&old.server) {
         let _ = old_client.remove_device(&old.token, &old.device_id).await;
     }
-    Ok(())
+    resent
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn refused(status: StatusCode) -> std::result::Result<(), ClientError> {
+        Err(ClientError::Refused {
+            status,
+            message: "unknown device".into(),
+        })
+    }
+
+    #[test]
+    fn a_busy_server_is_asked_again_and_a_gone_pairing_ends_it() {
+        assert_eq!(polled(Ok(3)).unwrap(), Some(3));
+        for status in [StatusCode::TOO_MANY_REQUESTS, StatusCode::BAD_GATEWAY] {
+            assert_eq!(polled(refused(status)).unwrap(), None);
+        }
+        // Once a pairing ends or runs out, the server knows neither side's key for it.
+        for status in [StatusCode::UNAUTHORIZED, StatusCode::NOT_FOUND] {
+            let problem = polled(refused(status)).unwrap_err().to_string();
+            assert!(problem.starts_with("the pairing ended before it finished"), "{problem}");
+        }
+        let problem = polled(refused(StatusCode::CONFLICT)).unwrap_err().to_string();
+        assert_eq!(problem, "the sync server said: unknown device");
+    }
 }
