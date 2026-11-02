@@ -57,6 +57,7 @@ import {
   removeOwnQuote,
   releasePage,
   removeSampleData,
+  savedStarColors,
   sessionLog,
   setProfileApps,
   setProfileAsksGoal,
@@ -174,9 +175,10 @@ let lastWeeks: Constellation[] = [];
 const weeks = computed(() =>
   firstDay.value === undefined ? [] : (lastWeeks = constellations(skyStars.value, firstDay.value, lastWeeks)),
 );
+const starColors = computed(() => savedStarColors(snapshot.value));
 let drawnStars = { colors: '', of: new WeakMap<Constellation, SkyStar[]>() };
 const skyConstellations = computed<(SkyConstellation & { named: boolean })[]>(() => {
-  const colors = new Map(snapshot.value?.profiles.map((p) => [p.id, p.starColor]));
+  const colors = starColors.value;
   const colorsKey = JSON.stringify([...colors]);
   if (colorsKey !== drawnStars.colors) drawnStars = { colors: colorsKey, of: new WeakMap() };
   const named = constellationNames(weeks.value, names.value);
@@ -299,7 +301,7 @@ watch(unseen, (items) => {
 
 const monthName = new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' });
 const skyPlanets = computed<SkyPlanet[]>(() => {
-  const colors = new Map(snapshot.value?.profiles.map((p) => [p.id, p.starColor]));
+  const colors = starColors.value;
   return planets(skyStars.value, rare.value).map((planet) => ({
     ...planet,
     label: `${monthName.format(planet.monthStart)} · ${formatDuration(planet.focusMs)}`,
@@ -569,6 +571,7 @@ async function run(action: () => Promise<void>) {
           :comets="allComets"
           :streaks="reportStreaks"
           :profiles="snapshot.profiles"
+          :star-colors="starColors"
           @week="(week: number) => (reportWeek = week)"
           @rename="rename"
           @set-plan="(id: string, plan: string) => run(() => setProfilePlan(id, plan))"

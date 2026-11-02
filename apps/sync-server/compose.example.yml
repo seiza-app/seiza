@@ -1,7 +1,12 @@
-# Copy to compose.yml, change what you need, then: docker compose up -d --build
+# Copy to compose.yml, change what you need, then: docker compose up -d
+# To update later: docker compose pull && docker compose up -d
 services:
   seiza-sync:
-    build: .
+    # latest is the newest build of main. For a fixed version use e.g. :0.1.0, or :sha-<commit>
+    # to go back to an earlier build.
+    image: ghcr.io/seiza-app/seiza-sync:latest
+    # Or build it from this folder instead (then docker compose up -d --build):
+    # build: .
     restart: unless-stopped
     ports:
       - '8080:8080'

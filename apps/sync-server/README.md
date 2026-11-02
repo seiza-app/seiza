@@ -23,18 +23,41 @@ number at the front, which picks the pairing).
 
 ## Running it with Docker
 
-From this folder:
+CI publishes the image to GitHub's registry as `ghcr.io/seiza-app/seiza-sync`, for both
+`linux/amd64` and `linux/arm64`. Copy [compose.example.yml](compose.example.yml) into a folder as
+`compose.yml`, change what you need, and start it:
 
 ```sh
-cp compose.example.yml compose.yml   # then change what you need
-docker compose up -d --build
+docker compose up -d
 ```
 
 It listens on port 8080 and keeps its database in the `seiza-sync-data` volume. Its health check
 is `seiza-sync health`.
 
+### Your first group
+
 **Start your own group straight away.** By default the server accepts exactly one group, the first
 device's, and then closes to new ones, so it's yours from the moment your first computer joins.
+
+### Updating
+
+Starting the container doesn't fetch a newer image by itself. To update, from the folder with
+`compose.yml`:
+
+```sh
+docker compose pull && docker compose up -d
+```
+
+The database stays in its volume, and the server updates it to the new version's layout when it
+starts, so back it up first (see below) if you want a way back. The tags:
+
+- `latest`: the newest build of `main`, once its checks pass.
+- `sha-<commit>`: that one build, e.g. to go back to an earlier one.
+- a version like `0.1.0`: from a `sync-server-v0.1.0` tag, once there are versions.
+
+To update without thinking about it, a tool like Watchtower can run the pull for you on a
+schedule. Building the image yourself works too: use `build: .` in `compose.yml` instead of
+`image:`, and `docker compose up -d --build` after `git pull`.
 
 ## In a Proxmox LXC behind a Cloudflare Tunnel
 

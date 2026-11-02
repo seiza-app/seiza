@@ -1,4 +1,5 @@
-# Seiza's sync server in one small image (PLAN §8, Sync). Build it from this folder:
+# Seiza's sync server in one small image (PLAN §8, Sync). CI publishes it as
+# ghcr.io/seiza-app/seiza-sync; to build it yourself, from this folder:
 #   docker build -t seiza-sync .
 # compose.example.yml shows how to run it; README.md has the rest.
 
@@ -9,6 +10,10 @@ COPY src ./src
 RUN cargo build --release --locked
 
 FROM debian:trixie-slim
+# The source label links the published image to the repository on GitHub.
+LABEL org.opencontainers.image.source=https://github.com/seiza-app/seiza \
+  org.opencontainers.image.description="Seiza's self-hostable sync server" \
+  org.opencontainers.image.licenses=AGPL-3.0-only
 # Runs as its own user, which only owns the data folder.
 RUN useradd --system --uid 10001 --home-dir /data --shell /usr/sbin/nologin seiza \
   && mkdir /data && chown seiza:seiza /data
