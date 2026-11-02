@@ -33,7 +33,8 @@ overtimeMs: number,
 idleTailMs: number, endReason: EndReason, 
 /**
  * Whether a browser had to be closed during a Hard session for running without the
- * extension. A broken session won't earn rewards.
+ * extension, which no longer happens. Sessions logged as broken before then stay that way,
+ * and earn no rewards.
  */
 broken: boolean, 
 /**

@@ -10,7 +10,8 @@ export type Settings = {
 passesPerWeek: number, 
 /**
  * Minutes without keyboard or mouse input before a session ends by itself. The time away
- * isn't counted. 0 turns this off.
+ * isn't counted. 0 turns this off, as it is for new installs: stepping away for a drink
+ * shouldn't end a session. Installs from before then keep 15 (store.rs).
  */
 idleMinutes: number, 
 /**

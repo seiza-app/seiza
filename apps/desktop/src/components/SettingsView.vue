@@ -225,20 +225,25 @@ const glowHelp = computed(() => {
         </p>
       </div>
       <div class="field">
-        <div class="line">
-          End a session after
+        <ToggleSwitch
+          label="End a session when you're away"
+          :model-value="settings.idleMinutes > 0"
+          @update:model-value="save({ idleMinutes: $event ? 15 : 0 })"
+        />
+        <div v-if="settings.idleMinutes > 0" class="line">
+          After
           <NumberField
             label="Minutes away before a session ends"
             unit="min away"
-            :min="0"
+            :min="1"
             :max="120"
             :model-value="settings.idleMinutes"
             @update:model-value="save({ idleMinutes: $event })"
           />
         </div>
         <p class="help">
-          With no keyboard or mouse input for this long, a session ends by itself, and the time away isn't counted. 0
-          turns this off.
+          For if you tend to forget to end sessions. With no keyboard or mouse input for a while, a session ends by
+          itself, and the time away isn't counted.
         </p>
       </div>
     </section>
@@ -289,8 +294,8 @@ const glowHelp = computed(() => {
           @update:model-value="save({ closeBrowsers: $event })"
         />
         <p class="help">
-          In a Medium session, the browser closes a minute after the warning. In Hard, the session also counts as
-          broken. During a Hard session this can't be turned off.
+          In a Medium or Hard session, the browser closes a minute after the warning. During a Hard session this can't
+          be turned off.
         </p>
       </div>
     </section>

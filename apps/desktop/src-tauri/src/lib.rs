@@ -271,7 +271,7 @@ fn watch_session(app: &AppHandle, session_id: Option<String>) {
                         .collect();
                     let linked = link::linked_browsers(&app);
                     for action in browser_watch.check(now, &browsers, &linked, response) {
-                        act_on_browser(&app, &id, action);
+                        act_on_browser(&app, action);
                     }
                 }
             }
@@ -325,37 +325,27 @@ fn act_on_apps(app: &AppHandle, profile_name: &str, actions: Vec<apps::Action>) 
     }
 }
 
-fn act_on_browser(app: &AppHandle, session_id: &str, action: Action) {
+fn act_on_browser(app: &AppHandle, action: Action) {
     let (title, body) = match action {
         Action::Warn { name, response } => {
             let then = match response {
                 Response::Warn => "to keep sites tamed there.".to_string(),
                 Response::Close => format!("or {name} will close in a minute."),
-                Response::CloseAndBreak => {
-                    format!("or {name} will close in a minute and this session will count as broken.")
-                }
             };
             (
                 format!("Seiza isn't running in {name}"),
                 format!("Turn the Seiza extension back on, {then}"),
             )
         }
-        Action::Close { pid, name, breaks } => {
+        Action::Close { pid, name } => {
             if !processes::quit(pid) {
                 eprintln!("Seiza: couldn't close {name}");
                 return;
             }
-            let mut body = format!("The Seiza extension was off. Turn it on before opening {name} again.");
-            if breaks {
-                let broken = engine(app).break_session(session_id, now_ms());
-                match broken {
-                    Ok(true) => changed(app),
-                    Ok(false) => {}
-                    Err(error) => eprintln!("Seiza: couldn't mark the session as broken: {error}"),
-                }
-                body.push_str(" This session now counts as broken.");
-            }
-            (format!("Closed {name}"), body)
+            (
+                format!("Closed {name}"),
+                format!("The Seiza extension was off. Turn it on before opening {name} again."),
+            )
         }
     };
     if let Err(error) = app.notification().builder().title(title).body(body).show() {

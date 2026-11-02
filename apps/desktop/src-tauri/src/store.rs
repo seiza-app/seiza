@@ -92,6 +92,16 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE sessions ADD COLUMN goal TEXT;
     ALTER TABLE sessions ADD COLUMN goal_met INTEGER;
 "#,
+    // Ending sessions for being idle became off by default. Installs from before then that
+    // never changed their settings keep the old 15 minutes; a new one has nothing saved yet.
+    // And sessions are no longer marked broken, so the running one's mark goes.
+    r#"
+    INSERT INTO state (key, value, updated_at)
+    SELECT 'settings', '{"idleMinutes":15}', 0
+    WHERE NOT EXISTS (SELECT 1 FROM state WHERE key = 'settings')
+        AND (EXISTS (SELECT 1 FROM state) OR EXISTS (SELECT 1 FROM sessions));
+    DELETE FROM state WHERE key = 'brokenSession';
+"#,
 ];
 
 impl Store {
@@ -608,5 +618,42 @@ mod tests {
         let reopened = Store::open(&path).unwrap();
         assert_eq!(reopened.load::<i32>("k").unwrap().map(|s| s.value), Some(1));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A database as it was before ending sessions for being idle became off by default.
+    fn from_before_idle_off(rows: &[(&str, &str)]) -> Store {
+        let db = Connection::open_in_memory().unwrap();
+        for migration in &MIGRATIONS[..6] {
+            db.execute_batch(migration).unwrap();
+        }
+        db.pragma_update(None, "user_version", 6).unwrap();
+        for (key, value) in rows {
+            db.execute(
+                "INSERT INTO state (key, value, updated_at) VALUES (?1, ?2, 1)",
+                params![key, value],
+            )
+            .unwrap();
+        }
+        Store::migrated(db).unwrap()
+    }
+
+    #[test]
+    fn older_installs_keep_ending_idle_sessions() {
+        use crate::settings::Settings;
+
+        let fresh = Store::open_in_memory().unwrap();
+        assert_eq!(fresh.load::<Settings>("settings").unwrap(), None);
+        assert_eq!(Settings::default().idle_minutes, 0);
+
+        let older = from_before_idle_off(&[("tour", "true"), ("brokenSession", r#""s1""#)]);
+        let settings = older.load::<Settings>("settings").unwrap().unwrap();
+        assert_eq!(settings.value.idle_minutes, 15);
+        assert_eq!(settings.updated_at, 0);
+        assert_eq!(older.load::<Option<String>>("brokenSession").unwrap(), None);
+
+        // Settings someone saved are left as they were.
+        let changed = from_before_idle_off(&[("settings", r#"{"idleMinutes":30,"passesPerWeek":4}"#)]);
+        let settings = changed.load::<Settings>("settings").unwrap().unwrap().value;
+        assert_eq!((settings.idle_minutes, settings.passes_per_week), (30, 4));
     }
 }

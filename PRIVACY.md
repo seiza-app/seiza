@@ -22,7 +22,7 @@ On sites it tames, the extension adds a stylesheet that hides parts of the page,
 
 ## What the app reads
 
-- **How long since your last keyboard or mouse input**, so a session left running while you're away ends by itself.
+- **How long since your last keyboard or mouse input**, only if you turn on ending a session when you're away, so one left running ends by itself.
 - **Which programs are running**, only during a session, to close or hide the apps your profile lists and to notice a browser running without the extension.
 - **The first day of the week set on your computer**, for the weekly report.
 

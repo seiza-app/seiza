@@ -139,7 +139,6 @@ describe('sessionSoFar', () => {
     profileName: 'Writing',
     startedAt: start,
     timer: { minutes: 45, onEnd: 'silent', strictness: 'gentle', showSinceDone: false },
-    broken: false,
     goal: null,
   };
 

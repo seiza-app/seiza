@@ -7,10 +7,6 @@ export type ActiveSession = { id: string, profileId: string, profileName: string
  */
 startedAt: number, timer: TimerSettings | null, 
 /**
- * A browser had to be closed during this Hard session for running without the extension.
- */
-broken: boolean, 
-/**
  * What it's for, if its profile asked and a goal was given.
  */
 goal: string | null, };

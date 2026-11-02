@@ -238,7 +238,8 @@ pub struct SessionRecord {
     pub idle_tail_ms: i64,
     pub end_reason: EndReason,
     /// Whether a browser had to be closed during a Hard session for running without the
-    /// extension. A broken session won't earn rewards.
+    /// extension, which no longer happens. Sessions logged as broken before then stay that way,
+    /// and earn no rewards.
     pub broken: bool,
     /// The goal set when it started, if its profile asked for one and it wasn't skipped.
     pub goal: Option<String>,
