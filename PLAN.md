@@ -113,7 +113,7 @@ The timer is a *starting ramp*, not a cage.
   - *Alert*: sound + notification
 - **"Show time since done" setting** (off by default): when on, a finished timer shows "Done · 37 min ago" and keeps counting up, so you can see how much extra you did. When off, it simply shows "Done".
 - **Secret overtime bonus:** overtime is always tracked, whichever setting you choose. Minutes after the timer ends count **1.5×**. This is never announced. It shows up only as that session's star twinkling a little brighter in your sky and as extra stardust (§5), a little discovery for later.
-- **Anti-gaming:** a session ends when you stop it, or automatically after N minutes of system idle (no keyboard or mouse; planned to be off by default, §9). The idle tail isn't counted, so a forgotten timer doesn't farm overtime.
+- **Anti-gaming:** a session ends when you stop it, or, if you turn it on in Settings, automatically after N minutes of system idle (no keyboard or mouse; off by default, §9). The idle tail isn't counted, so a forgotten timer doesn't farm overtime.
 
 ---
 
@@ -461,7 +461,7 @@ Today the extension updates itself through the stores, but updating the app mean
 **Phase 2: Desktop app (Tauri)** *(macOS and Linux; Windows support comes later: Native Messaging registry entries, idle time, and finding the browser behind a bridge)*
 - ✅ Menu-bar app, session engine, quiet timer + idle detection.
 - ✅ Strictness levels + emergency passes.
-- ✅ Native Messaging link + extension heartbeat: if the extension goes quiet during a session, warn → close that browser → count the session as broken, depending on strictness. The app and extension each work alone, so it only watches sessions whose profile tames sites, and closing is opt-in in Settings. (Planned: no more broken sessions, §9.)
+- ✅ Native Messaging link + extension heartbeat: if the extension goes quiet during a session, warn → close that browser, depending on strictness. The app and extension each work alone, so it only watches sessions whose profile tames sites, and closing is opt-in in Settings. Hard sessions used to count as broken too; not any more (§9).
 - ✅ App rules, SQLite. The session log keeps everything the rewards will need later (§5), so stardust and the sky can be worked out from past sessions once they ship. (On macOS, app launches come from `NSWorkspace` notifications; Linux has no unprivileged equivalent, so it checks every 10 seconds during sessions, about 9 ms each.)
 
 **Phase 3: Satellites & insights**
@@ -517,9 +517,9 @@ Built in slices, one PR each:
   - Left: checking each recipe on the real sites while logged in; screenshots and the promo tile; submitting to both stores.
   - Not paying for Apple or Windows code signing for now. Unsigned builds work after **Open Anyway** in macOS's Privacy & Security settings, which the release notes explain.
 
-**Next: two smaller session changes** (decided in the sync planning, November 2026; either can come before sync)
-- Ending a session for being idle is off by default for new installs, and stays in Settings for anyone who forgets to end sessions. Stepping away for a drink shouldn't end one.
-- No more broken sessions: the extension heartbeat still warns and, if turned on, closes the browser, but the session no longer counts as broken. Sessions already logged as broken stay as they are.
+**Two smaller session changes** (decided in the sync planning, November 2026)
+- ✅ Ending a session for being idle is off by default for new installs, and stays in Settings (a switch, then the minutes) for anyone who forgets to end sessions. Stepping away for a drink shouldn't end one. Installs from before keep the 15 minutes they had, unless they'd changed it.
+- ✅ No more broken sessions: the extension heartbeat still warns and, if turned on, closes the browser (in Medium and Hard alike), but the session no longer counts as broken. Sessions already logged as broken stay as they are, and still earn nothing.
 
 **Phase 6: Website, community sky & sync**
 - Marketing website (§10) + community-worlds gallery, with the Why it works page (§12).
@@ -563,7 +563,7 @@ Built in slices, one PR each:
   - Disabling the extension mid-session triggers the strictness response.
   - In *Silent* mode the timer ends with no visible change at all. With "Show time since done" on, it shows "Done · N min ago".
   - Overtime minutes are recorded either way.
-  - Idle auto-ends the session without counting the idle tail.
+  - With ending idle sessions turned on, idle auto-ends the session without counting the idle tail.
   - Hard mode can't be ended without a pass.
 - **Performance:** with the window closed, check idle CPU (~0%) and memory in Activity Monitor. Energy impact should be "Low".
 

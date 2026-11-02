@@ -131,7 +131,7 @@ export function sessionSoFar(session: ActiveSession, now: number): SessionRecord
     overtimeMs: Math.max(0, elapsed - timerMs),
     idleTailMs: 0,
     endReason: 'stopped',
-    broken: session.broken,
+    broken: false,
     goal: session.goal,
     goalMet: null,
   };

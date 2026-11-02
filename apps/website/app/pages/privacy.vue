@@ -68,8 +68,8 @@ usePageSeo({
       <h2 class="reveal" style="--d: 80ms">Just enough to run sessions</h2>
       <ul class="plain">
         <li class="reveal" style="--d: 120ms">
-          <strong>How long since your last keyboard or mouse input,</strong> so a session left running while you're away
-          ends by itself.
+          <strong>How long since your last keyboard or mouse input,</strong> only if you turn on ending a session when
+          you're away, so one left running ends by itself.
         </li>
         <li class="reveal" style="--d: 160ms">
           <strong>Which programs are running,</strong> only during a session, to close or hide the apps your profile

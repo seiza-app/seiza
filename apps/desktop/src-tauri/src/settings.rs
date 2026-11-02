@@ -12,7 +12,8 @@ pub struct Settings {
     /// Emergency passes for ending a Hard session early, per 7 days.
     pub passes_per_week: u32,
     /// Minutes without keyboard or mouse input before a session ends by itself. The time away
-    /// isn't counted. 0 turns this off.
+    /// isn't counted. 0 turns this off, as it is for new installs: stepping away for a drink
+    /// shouldn't end a session. Installs from before then keep 15 (store.rs).
     pub idle_minutes: u32,
     /// Whether a Medium or Hard session closes a browser that runs without the extension
     /// (and Hard counts the session as broken). Off, it only warns. Opt-in, so the app and
@@ -46,7 +47,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             passes_per_week: 2,
-            idle_minutes: 15,
+            idle_minutes: 0,
             close_browsers: false,
             battery_saver: false,
             glow: DEFAULT_GLOW.into(),

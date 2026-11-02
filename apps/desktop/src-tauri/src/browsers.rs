@@ -8,8 +8,8 @@
 //! Settings (it's opt-in, so the app and extension can each be used alone). With it on, it
 //! depends on the session's strictness:
 //! - Gentle, or no timer running: a warning.
-//! - Medium: a warning, then the browser is closed a minute later.
-//! - Hard: the same, and the session counts as broken.
+//! - Medium and Hard: a warning, then the browser is closed a minute later. The session
+//!   carries on as it was; nothing counts against it.
 
 use std::collections::{HashMap, HashSet};
 
@@ -39,7 +39,7 @@ const CLOSE_AFTER_MS: i64 = 60_000;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
     Warn { name: String, response: Response },
-    Close { pid: u32, name: String, breaks: bool },
+    Close { pid: u32, name: String },
 }
 
 /// How far a session goes when a browser runs without the extension.
@@ -47,7 +47,6 @@ pub enum Action {
 pub enum Response {
     Warn,
     Close,
-    CloseAndBreak,
 }
 
 impl Response {
@@ -59,8 +58,7 @@ impl Response {
         }
         match lock {
             None | Some(Strictness::Gentle) => Response::Warn,
-            Some(Strictness::Medium) => Response::Close,
-            Some(Strictness::Hard) => Response::CloseAndBreak,
+            Some(Strictness::Medium | Strictness::Hard) => Response::Close,
         }
     }
 }
@@ -118,7 +116,6 @@ impl BrowserWatch {
                     actions.push(Action::Close {
                         pid: browser.pid,
                         name: browser.name.clone(),
-                        breaks: response == Response::CloseAndBreak,
                     });
                 }
                 _ => {}
@@ -213,7 +210,6 @@ mod tests {
                     Action::Close {
                         pid: 7,
                         name: "Google Chrome".into(),
-                        breaks: false
                     }
                 ),
             ]
@@ -221,10 +217,12 @@ mod tests {
     }
 
     #[test]
-    fn hard_also_breaks_the_session() {
+    fn hard_closes_the_browser_like_medium() {
         let mut watch = BrowserWatch::default();
-        let actions = run(&mut watch, 90 * SEC, &linked(&[]), Some(Strictness::Hard));
-        assert!(matches!(actions.last(), Some((_, Action::Close { breaks: true, .. }))));
+        let hard = run(&mut watch, 90 * SEC, &linked(&[]), Some(Strictness::Hard));
+        let mut watch = BrowserWatch::default();
+        let medium = run(&mut watch, 90 * SEC, &linked(&[]), Some(Strictness::Medium));
+        assert_eq!(hard, medium);
     }
 
     #[test]

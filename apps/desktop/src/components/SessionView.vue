@@ -89,9 +89,6 @@ const lockHelp = computed(() => {
     <p class="mono">
       {{ detail }} · Started <b>{{ started }}</b>
     </p>
-    <p v-if="session.broken" class="help">
-      Counts as broken: a browser had to be closed for running without the extension.
-    </p>
     <EndEarly
       v-if="endingEarly && lock"
       class="end-early"
