@@ -117,6 +117,75 @@ pub struct Inbox {
     pub joined: bool,
 }
 
+/// Something the server's live connection said (apps/sync-server's live.rs).
+#[derive(Debug, PartialEq, Eq)]
+pub enum LiveEvent {
+    /// Connected: anything sent meanwhile is waiting to be fetched.
+    Ready,
+    /// Another device uploaded a batch.
+    Batch,
+    /// Another device's message, sealed (`Purpose::Live`).
+    Message { device_id: String, data: Vec<u8> },
+}
+
+/// How long the live connection can go without a word before it's given up for lost (the
+/// server sends a comment every 40 seconds), as after the computer sleeps.
+const LIVE_SILENCE: Duration = Duration::from_secs(100);
+/// The most of an event held while waiting for the rest of it.
+const MAX_LIVE_EVENT_BYTES: usize = 64 * 1024;
+
+/// An open live connection.
+pub struct Live {
+    response: Response,
+    buffer: Vec<u8>,
+}
+
+impl Live {
+    /// The next event, or None once the server's ended the connection.
+    pub async fn next(&mut self) -> Result<Option<LiveEvent>> {
+        loop {
+            while let Some(end) = self.buffer.windows(2).position(|pair| pair == b"\n\n") {
+                let block: Vec<u8> = self.buffer.drain(..end + 2).collect();
+                if let Some(event) = live_event(&String::from_utf8_lossy(&block)) {
+                    return Ok(Some(event));
+                }
+            }
+            if self.buffer.len() > MAX_LIVE_EVENT_BYTES {
+                return Err(ClientError::Unexpected);
+            }
+            match self.response.chunk().await.map_err(ClientError::Offline)? {
+                Some(bytes) => self.buffer.extend_from_slice(&bytes),
+                None => return Ok(None),
+            }
+        }
+    }
+}
+
+/// One server-sent event, if it's one this version knows. Comments (the heartbeat) and kinds
+/// from newer servers are left out.
+fn live_event(block: &str) -> Option<LiveEvent> {
+    let field = |name: &str| block.lines().find_map(|line| line.strip_prefix(name));
+    match field("event: ")? {
+        "ready" => Some(LiveEvent::Ready),
+        "batch" => Some(LiveEvent::Batch),
+        "message" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Wire {
+                device_id: String,
+                data: String,
+            }
+            let wire: Wire = serde_json::from_str(field("data: ")?).ok()?;
+            let data = STANDARD.decode(wire.data).ok()?;
+            Some(LiveEvent::Message {
+                device_id: wire.device_id,
+                data,
+            })
+        }
+        _ => None,
+    }
+}
+
 /// One sync server, at an address like `https://sync.example.com`.
 #[derive(Clone)]
 pub struct Client {
@@ -226,6 +295,36 @@ impl Client {
             batches,
             more: page.more,
         })
+    }
+
+    /// Opens this device's live connection. It stays open, so it has no overall time limit, only
+    /// one on how long it can go quiet.
+    pub async fn listen(&self, token: &str) -> Result<Live> {
+        let http = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .read_timeout(LIVE_SILENCE)
+            .build()
+            .map_err(ClientError::Offline)?;
+        let request = http
+            .get(format!("{}/v1/live", self.address))
+            .header(PROTOCOL.0, PROTOCOL.1)
+            .bearer_auth(token);
+        let response = checked(request.send().await).await?;
+        Ok(Live {
+            response,
+            buffer: Vec::new(),
+        })
+    }
+
+    /// Passes a sealed message to the group's other connected devices.
+    pub async fn tell(&self, token: &str, sealed: Vec<u8>) -> Result<()> {
+        empty_from(
+            self.request(Method::POST, "/live", Some(token))
+                .body(sealed)
+                .send()
+                .await,
+        )
+        .await
     }
 
     /// Opens a pairing for a new device (the host's side).
@@ -355,6 +454,29 @@ mod tests {
     }
 
     #[test]
+    fn reads_the_live_connection_s_events() {
+        assert_eq!(live_event("event: ready\ndata: {}\n\n"), Some(LiveEvent::Ready));
+        assert_eq!(
+            live_event("event: batch\ndata: {\"seq\":4}\n\n"),
+            Some(LiveEvent::Batch)
+        );
+        assert_eq!(
+            live_event("event: message\ndata: {\"deviceId\":\"d\",\"data\":\"aGk=\"}\n\n"),
+            Some(LiveEvent::Message {
+                device_id: "d".into(),
+                data: b"hi".to_vec(),
+            })
+        );
+        // The heartbeat, a kind from a newer server, and a message that isn't base64.
+        assert_eq!(live_event(":\n\n"), None);
+        assert_eq!(live_event("event: something-new\ndata: {}\n\n"), None);
+        assert_eq!(
+            live_event("event: message\ndata: {\"deviceId\":\"d\",\"data\":\"!!\"}\n\n"),
+            None
+        );
+    }
+
+    #[test]
     fn path_segments_stay_one_segment() {
         assert_eq!(segment("4821"), "4821");
         assert_eq!(segment("a-B_9"), "a-B_9");
@@ -427,8 +549,21 @@ mod tests {
             .collect();
         assert_eq!(names, ["Mac mini", "MacBook Air"]);
 
+        // The first device hears of it on its live connection.
+        let mut live = client.listen(&first.token).await.unwrap();
+        assert_eq!(live.next().await.unwrap(), Some(LiveEvent::Ready));
         let sealed = received.seal(Purpose::Batch, &membership.group_id, b"a session");
         let seq = client.upload_batch(&membership.token, sealed).await.unwrap();
+        assert_eq!(live.next().await.unwrap(), Some(LiveEvent::Batch));
+        let message = received.seal(Purpose::Live, &membership.group_id, b"idle?");
+        client.tell(&membership.token, message.clone()).await.unwrap();
+        assert_eq!(
+            live.next().await.unwrap(),
+            Some(LiveEvent::Message {
+                device_id: membership.device_id.clone(),
+                data: message,
+            })
+        );
         let page = client.batches_after(&first.token, seq - 1).await.unwrap();
         assert_eq!(
             key.open(Purpose::Batch, &first.group_id, &page.batches[0].data)

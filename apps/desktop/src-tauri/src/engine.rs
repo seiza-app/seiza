@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Map;
 use ts_rs::TS;
 
 use crate::apps::{self, AppRule};
@@ -398,6 +399,131 @@ impl Engine {
         };
         self.log_end(&mut record, none)?;
         Ok(Some(record))
+    }
+
+    /// Takes on the session running on the sync group's other computers (live sessions, PLAN
+    /// §8): joins it, or brings in a change to its rules. Its rules are kept as they came, but a
+    /// Hard session's only get stricter, as with changes made here. If a different session is
+    /// running here, the one that started last wins, except that a Hard session that's still
+    /// locked beats one that isn't; the one that loses here is logged as ending now. A session
+    /// that's already in the log is over, so it isn't joined again. The browsers' own changes to
+    /// it (`rest`) stay on each computer. Returns whether anything changed.
+    pub fn take_group_session(&mut self, mut incoming: Session, goal: Option<String>, now: i64) -> Result<bool> {
+        if self.store.has_session(&incoming.id)? {
+            return Ok(false);
+        }
+        let current = self.session().cloned();
+        if let Some(current) = current.as_ref().filter(|c| c.id == incoming.id) {
+            return self.update_group_session(current, incoming.rules, goal, now);
+        }
+        if let Some(current) = &current {
+            let hard = |s: &Session| s.lock(now) == Some(Strictness::Hard);
+            let keep = match (hard(current), hard(&incoming)) {
+                (true, false) => true,
+                (false, true) => false,
+                _ => (current.started_at, &current.id) > (incoming.started_at, &incoming.id),
+            };
+            if keep {
+                return Ok(false);
+            }
+        }
+        incoming.rest = Map::new();
+        if incoming.rules.is_none() {
+            incoming.rules = self.profile(&incoming.profile_id).cloned();
+        }
+        if incoming.timer.is_none() {
+            incoming.timer = Some(
+                self.profile(&incoming.profile_id)
+                    .map(Profile::timer)
+                    .unwrap_or_default(),
+            );
+        }
+        let goal = goal.and_then(|text| SessionGoal::new(&incoming, &text));
+        let joined = Synced {
+            value: Some(incoming),
+            // Newer than any copy the extension has, so it takes this one.
+            updated_at: now.max(self.session.updated_at + 1),
+        };
+        match current {
+            Some(current) => {
+                let name = self.profile_name(&current.profile_id);
+                let mut record = SessionRecord::new(&current, &name, now, EndReason::Stopped);
+                self.log_end(&mut record, joined)?;
+            }
+            None => {
+                self.store.save(ACTIVE_SESSION, &joined)?;
+                self.session = joined;
+            }
+        }
+        // Like starting one here: whatever the last session's goal was, it's no longer waiting.
+        self.save_goal(goal, now)?;
+        Ok(true)
+    }
+
+    /// Brings another computer's change to the running session into it: its rules, unless they'd
+    /// loosen a Hard one, and its goal.
+    fn update_group_session(
+        &mut self,
+        current: &Session,
+        rules: Option<Profile>,
+        goal: Option<String>,
+        now: i64,
+    ) -> Result<bool> {
+        let loosens =
+            |old: &Profile, new: &Profile| new.sites_looser_than(old) || apps::looser(&old.apps(), &new.apps());
+        let hard = current.lock(now) == Some(Strictness::Hard);
+        let rules = match (&current.rules, rules) {
+            (Some(old), Some(new)) if hard && loosens(old, &new) => None,
+            (_, new) => new.filter(|new| current.rules.as_ref() != Some(new)),
+        };
+        let mut changed = false;
+        if let Some(rules) = rules {
+            let mut session = current.clone();
+            session.rules = Some(rules);
+            let synced = Synced {
+                value: Some(session),
+                updated_at: now.max(self.session.updated_at + 1),
+            };
+            self.store.save(ACTIVE_SESSION, &synced)?;
+            self.session = synced;
+            changed = true;
+        }
+        let goal = goal.and_then(|text| SessionGoal::new(current, &text));
+        if goal.is_some() && goal != self.goal {
+            self.save_goal(goal, now)?;
+            changed = true;
+        }
+        Ok(changed)
+    }
+
+    /// The running session's goal, if it has one.
+    pub fn session_goal(&self) -> Option<&str> {
+        let session = self.session()?;
+        let goal = self.goal.as_ref().filter(|g| g.session_id == session.id)?;
+        Some(&goal.text)
+    }
+
+    /// Ends the running session, if it's this one, because it ended on another computer in the
+    /// sync group. That computer logs it, so it isn't logged here. Satellites in orbit come back,
+    /// and its goal waits for "Did you do it?" here too. Returns whether it was running.
+    pub fn end_group_session(&mut self, id: &str, now: i64) -> Result<bool> {
+        if self.session().is_none_or(|s| s.id != id) {
+            return Ok(false);
+        }
+        for satellite in &mut self.satellites {
+            if satellite.state == SatelliteState::Orbiting {
+                self.store.move_satellite(&satellite.id, SatelliteState::Back, now)?;
+                satellite.state = SatelliteState::Back;
+                satellite.state_at = now;
+            }
+        }
+        let none = Synced {
+            value: None,
+            updated_at: now.max(self.session.updated_at + 1),
+        };
+        self.store.save(ACTIVE_SESSION, &none)?;
+        self.session = none;
+        Ok(true)
     }
 
     /// Changes the app-wide settings. While a Hard session is running, passes per week can
@@ -941,14 +1067,36 @@ impl Engine {
     }
 
     /// Saves records sync fetched from other devices, where they win over the copy here.
-    /// Emergency passes used elsewhere count here too, since they're in the log. Returns how
-    /// many changed something.
+    /// Emergency passes used elsewhere count here too, since they're in the log, and a running
+    /// session that's been logged elsewhere has ended. Returns how many changed something.
     pub fn apply_records(&mut self, records: &[Record], now: i64) -> Result<usize> {
         let applied = self.store.apply(records)?;
         if applied > 0 {
             self.pass_uses = self.store.pass_uses()?;
             if records.iter().any(|r| matches!(r, Record::Profile(_))) {
                 self.take_synced_profiles(now)?;
+            }
+            let logged = |id: &str| {
+                records.iter().find_map(|r| match r {
+                    Record::Session(s) if s.session.id == id => Some(&s.session),
+                    _ => None,
+                })
+            };
+            // The running session ended on another computer, which logged it.
+            if let Some(id) = self.session().map(|s| s.id.clone())
+                && logged(&id).is_some()
+            {
+                self.end_group_session(&id, now)?;
+            }
+            // Or "Did you do it?" was answered there.
+            let answered = self.session().is_none()
+                && self
+                    .goal
+                    .as_ref()
+                    .and_then(|g| logged(&g.session_id))
+                    .is_some_and(|s| s.goal_met.is_some());
+            if answered {
+                self.save_goal(None, now)?;
             }
         }
         Ok(applied)
@@ -1630,6 +1778,137 @@ mod tests {
         assert_eq!(engine.apply_records(&records, 60 * MIN).unwrap(), 1);
         assert_eq!(engine.passes_left(60 * MIN), 1);
         assert_eq!(engine.changed_records(0, 10).unwrap().0, vec![]);
+    }
+
+    /// The session running on `engine`, as another computer in the sync group sends it.
+    fn sent(engine: &Engine) -> (Session, Option<String>) {
+        let mut session = engine.session().unwrap().clone();
+        session.rest.clear();
+        (session, engine.session_goal().map(str::to_owned))
+    }
+
+    #[test]
+    fn a_session_from_another_computer_starts_here_and_ends_with_it() {
+        let (mut there, mut here) = (engine(), engine());
+        there.start_session("deep-work", MIN).unwrap();
+        there.set_session_goal("Write the intro", MIN).unwrap();
+        let (session, goal) = sent(&there);
+        assert!(here.take_group_session(session.clone(), goal.clone(), 2 * MIN).unwrap());
+        assert_eq!(here.session().unwrap().id, session.id);
+        assert_eq!(here.session().unwrap().rules, session.rules);
+        assert_eq!(here.session_goal(), Some("Write the intro"));
+        assert!(!here.take_group_session(session.clone(), goal.clone(), 3 * MIN).unwrap());
+        here.launch_satellite("reply to Sam", 4 * MIN).unwrap();
+
+        // Ended there: logged there, and only stopped here.
+        there.end_session(30 * MIN, EndReason::Stopped).unwrap();
+        let (records, _) = there.changed_records(0, 100).unwrap();
+        here.apply_records(&records, 31 * MIN).unwrap();
+        assert!(here.session().is_none());
+        assert_eq!(satellites(&here), vec![("reply to Sam", SatelliteState::Back)]);
+        let log = here.session_log().unwrap();
+        assert_eq!((log.len(), log[0].ended_at), (1, 30 * MIN));
+        assert_eq!(here.changed_records(0, 100).unwrap().0, vec![]);
+        assert_eq!(
+            here.snapshot(31 * MIN).goal_to_answer.map(|g| g.text),
+            Some("Write the intro".into())
+        );
+        // It's over, so it isn't joined again.
+        assert!(!here.take_group_session(session.clone(), goal, 32 * MIN).unwrap());
+
+        // "Did you do it?" answered there stops waiting here too.
+        there.answer_goal(&session.id, true, 33 * MIN).unwrap();
+        let (records, _) = there.changed_records(0, 100).unwrap();
+        here.apply_records(&records, 34 * MIN).unwrap();
+        assert_eq!(here.snapshot(34 * MIN).goal_to_answer, None);
+    }
+
+    #[test]
+    fn a_session_ended_there_stops_here_without_being_logged_here() {
+        let (mut there, mut here) = (engine(), engine());
+        there.start_session("writing", MIN).unwrap();
+        let (session, goal) = sent(&there);
+        here.take_group_session(session.clone(), goal, MIN).unwrap();
+        assert!(!here.end_group_session("another", 2 * MIN).unwrap());
+        assert!(here.end_group_session(&session.id, 2 * MIN).unwrap());
+        assert!(here.session().is_none());
+        assert!(here.session_log().unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_later_session_wins_unless_a_hard_one_is_still_locked() {
+        let session = |profile: &str, at: i64| sent(&engine_with_session(profile, at)).0;
+        let mut here = engine();
+        here.start_session("writing", 10 * MIN).unwrap();
+        let earlier = session("deep-work", 5 * MIN);
+        assert!(!here.take_group_session(earlier, None, 11 * MIN).unwrap());
+        assert_eq!(here.session().unwrap().profile_id, "writing");
+
+        let later = session("deep-work", 20 * MIN);
+        assert!(here.take_group_session(later.clone(), None, 21 * MIN).unwrap());
+        assert_eq!(here.session().unwrap().id, later.id);
+        let log = here.session_log().unwrap();
+        assert_eq!(
+            (log[0].profile_id.as_str(), log[0].ended_at, log[0].end_reason),
+            ("writing", 21 * MIN, EndReason::Stopped)
+        );
+
+        // A Hard session that's still locked stays, unless the later one is too.
+        let mut hard = hard_engine();
+        hard.start_session("deep-work", MIN).unwrap();
+        let gentle = session("writing", 2 * MIN);
+        assert!(!hard.take_group_session(gentle, None, 3 * MIN).unwrap());
+        let mut also_hard = hard_engine();
+        also_hard.start_session("deep-work", 4 * MIN).unwrap();
+        let (later_hard, _) = sent(&also_hard);
+        assert!(hard.take_group_session(later_hard.clone(), None, 5 * MIN).unwrap());
+        assert_eq!(hard.session().unwrap().id, later_hard.id);
+    }
+
+    fn engine_with_session(profile: &str, at: i64) -> Engine {
+        let mut engine = engine();
+        engine.start_session(profile, at).unwrap();
+        engine
+    }
+
+    #[test]
+    fn a_hard_group_session_s_rules_only_get_stricter() {
+        let (mut there, mut here) = (hard_engine(), hard_engine());
+        there.start_session("deep-work", MIN).unwrap();
+        let (session, _) = sent(&there);
+        here.take_group_session(session.clone(), None, MIN).unwrap();
+
+        let mut looser = session.clone();
+        looser.rules.as_mut().unwrap().set_sites(&[]);
+        assert!(!here.take_group_session(looser, None, 2 * MIN).unwrap());
+        assert_eq!(here.session().unwrap().rules, session.rules);
+
+        let mut stricter = session.clone();
+        let discord = AppRule {
+            name: "Discord".into(),
+            path: "/Applications/Discord.app".into(),
+            action: apps::AppAction::Close,
+        };
+        stricter.rules.as_mut().unwrap().set_apps(&[discord]);
+        assert!(here.take_group_session(stricter.clone(), None, 3 * MIN).unwrap());
+        assert_eq!(here.session().unwrap().rules, stricter.rules);
+
+        // Once the timer's done, they can loosen too.
+        let mut looser = stricter.clone();
+        looser.rules.as_mut().unwrap().set_apps(&[]);
+        assert!(here.take_group_session(looser.clone(), None, 60 * MIN).unwrap());
+        assert_eq!(here.session().unwrap().rules, looser.rules);
+    }
+
+    #[test]
+    fn a_group_session_keeps_this_computer_s_browser_changes_and_fills_in_what_s_missing() {
+        let mut here = engine();
+        let mut session = remote_session("s1", "writing", None);
+        session.rest.clear();
+        here.take_group_session(session, None, MIN).unwrap();
+        let running = here.session().unwrap();
+        assert_eq!(running.rules.as_ref(), here.profile("writing"));
+        assert_eq!(running.timer.as_ref().map(|t| t.minutes), Some(45));
     }
 
     #[test]

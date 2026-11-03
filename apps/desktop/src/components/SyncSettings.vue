@@ -2,6 +2,7 @@
 import type { SyncDevice } from '@lock-in/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { computed, ref, watch } from 'vue';
+import ToggleSwitch from './ToggleSwitch.vue';
 import {
   addSyncDevice,
   answerSyncDevice,
@@ -9,6 +10,7 @@ import {
   leaveSync,
   moveSyncServer,
   removeSyncDevice,
+  setSyncFollow,
   startSyncGroup,
   stopPairing,
   syncDevices,
@@ -18,7 +20,8 @@ import {
 } from '../app';
 
 // Settings › Sync (PLAN §8, Sync): joining a group on a server you run, adding your other
-// computers to it with a pairing code, and the group's devices. The core does the work
+// computers to it with a pairing code, the group's devices, and whether this computer follows the
+// group's sessions. The core does the work
 // (sync/setup.rs); this shows where it's got to.
 
 defineProps<{
@@ -266,6 +269,18 @@ const left = computed(() => {
           {{ status.lastSyncedAt ? `Last synced ${since(status.lastSyncedAt)}.` : 'Not synced yet.' }}
         </p>
         <p v-if="status.problem" class="help problem" role="alert">{{ sentence(status.problem) }}</p>
+      </div>
+
+      <div class="field">
+        <ToggleSwitch
+          label="Start sessions from my other computers here"
+          :model-value="status.follow"
+          @update:model-value="attempt(() => setSyncFollow($event))"
+        />
+        <p class="help">
+          A session started on one runs on all of them, and ending it on one ends it everywhere. Off, this computer only
+          syncs finished sessions, and sessions started here stay here.
+        </p>
       </div>
 
       <div class="field">

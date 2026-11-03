@@ -1,7 +1,8 @@
 //! Hearing when apps launch or come back from being hidden, so a session can close or hide
 //! them straight away instead of checking on a timer. macOS announces both; Linux has no way
 //! for an ordinary program to hear about new processes, so there the session checks every
-//! few seconds instead (`POLL_EVERY_MS`).
+//! few seconds instead (`POLL_EVERY_MS`). Also hearing when the computer wakes from sleep, so
+//! sync's live connection comes back straight away (sync/live.rs).
 //!
 //! This is the one place Seiza talks to macOS through `unsafe` code: the compiler can't
 //! check the promises Apple's API asks for, so each one is written down where it's kept.
@@ -51,6 +52,27 @@ pub fn listen(wake: Arc<Notify>) {
         std::mem::forget(observer);
     }
 }
+
+/// Calls `woke` whenever the computer wakes from sleep, for as long as the app runs.
+#[cfg(target_os = "macos")]
+pub fn on_wake(woke: impl Fn() + Send + Sync + 'static) {
+    use block2::RcBlock;
+    use objc2_app_kit::{NSWorkspace, NSWorkspaceDidWakeNotification};
+
+    let center = NSWorkspace::sharedWorkspace().notificationCenter();
+    // SAFETY: a constant defined by AppKit, as in `listen`.
+    let name = unsafe { NSWorkspaceDidWakeNotification };
+    let block = RcBlock::new(move |_| woke());
+    // SAFETY: as in `listen`: `object` and the queue are None, and the block holds only what
+    // `woke` captures, which must be `Send + Sync` (the bound above keeps it so).
+    let observer = unsafe { center.addObserverForName_object_queue_usingBlock(Some(name), None, None, &block) };
+    // Kept forever, as in `listen`.
+    std::mem::forget(observer);
+}
+
+/// Elsewhere, the live connection notices it's gone after a while instead.
+#[cfg(not(target_os = "macos"))]
+pub fn on_wake(_woke: impl Fn() + Send + Sync + 'static) {}
 
 /// Elsewhere, sessions check on a timer instead (`POLL_EVERY_MS`).
 #[cfg(not(target_os = "macos"))]

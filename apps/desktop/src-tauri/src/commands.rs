@@ -457,6 +457,12 @@ pub async fn sync_remove_device(app: AppHandle, device_id: String) -> Result<()>
     crate::sync::setup::remove_device(&app, &device_id).await
 }
 
+/// Start sessions from my other computers here, on or off.
+#[tauri::command]
+pub fn sync_set_follow(app: AppHandle, on: bool) -> Result<()> {
+    crate::sync::setup::set_follow(&app, on)
+}
+
 /// Leave sync. Returns whether the server heard.
 #[tauri::command]
 pub async fn sync_leave(app: AppHandle) -> Result<bool> {

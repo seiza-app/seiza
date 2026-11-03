@@ -364,7 +364,8 @@ struct IdleTask(Mutex<Option<JoinHandle<()>>>);
 
 /// Checks once a minute while a session runs, and ends it after `idle_minutes` without
 /// keyboard or mouse input. Nothing runs between sessions, or where the system can't say how
-/// long it's been idle.
+/// long it's been idle. Before ending it, it asks the sync group's other computers running the
+/// same session, and goes on if anyone's been using theirs (sync/live.rs).
 fn watch_idle(app: &AppHandle, session_id: Option<String>, idle_minutes: u32) {
     let task = app.state::<IdleTask>();
     let mut task = task.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -382,11 +383,19 @@ fn watch_idle(app: &AppHandle, session_id: Option<String>, idle_minutes: u32) {
     *task = Some(tauri::async_runtime::spawn(async move {
         let Some(idle_ms) = idle_reading().await else { return };
         let mut watch = IdleWatch::new(now_ms(), idle_ms);
+        let mut elsewhere = i64::MIN;
         loop {
             tokio::time::sleep(Duration::from_millis(idle::CHECK_EVERY_MS as u64)).await;
             let Some(idle_ms) = idle_reading().await else { return };
+            let last_input = watch.check(now_ms(), idle_ms).max(elsewhere);
+            if now_ms() - last_input < limit {
+                continue;
+            }
+            if let Some(at) = sync::live::last_input_elsewhere(&app, &session_id).await {
+                elsewhere = elsewhere.max(at);
+            }
+            let last_input = last_input.max(elsewhere);
             let now = now_ms();
-            let last_input = watch.check(now, idle_ms);
             if now - last_input >= limit {
                 end_idle_session(&app, &session_id, last_input, now, idle_minutes);
                 return;
@@ -397,7 +406,7 @@ fn watch_idle(app: &AppHandle, session_id: Option<String>, idle_minutes: u32) {
 
 /// Reads the system's idle time on a thread that's allowed to wait, since on Linux it waits on
 /// D-Bus.
-async fn idle_reading() -> Option<i64> {
+pub(crate) async fn idle_reading() -> Option<i64> {
     tauri::async_runtime::spawn_blocking(idle::system_idle_ms)
         .await
         .ok()
@@ -538,12 +547,18 @@ pub fn run() {
             let wake = WatchWake::default();
             launches::listen(Arc::clone(&wake.0));
             app.manage(wake);
+            let handle = app.handle().clone();
+            launches::on_wake(move || {
+                sync::live::woke(&handle);
+                sync::exchange::fetch(&handle);
+            });
             app.manage(link::Links::default());
             app.manage(capture::CameFrom::default());
             app.manage(capture::Paused::default());
             app.manage(updates::Updates::default());
             app.manage(sync::setup::Pairings::default());
             app.manage(sync::exchange::Exchanges::default());
+            app.manage(sync::live::Listener::default());
 
             tray::create(app.handle(), &snapshot)?;
             capture::listen(app.handle());
@@ -555,6 +570,7 @@ pub fn run() {
             watch_session(app.handle(), session.as_ref().map(|s| s.id.clone()));
             schedule_timer(app.handle(), session, snapshot.session.map(|s| s.profile_name));
             sync_blocker(app.handle());
+            sync::live::watch(app.handle());
             tauri::async_runtime::spawn(link::serve(app.handle().clone()));
             updates::watch(app.handle());
             match std::env::current_exe() {
@@ -647,6 +663,7 @@ pub fn run() {
             commands::sync_stop_pairing,
             commands::sync_devices,
             commands::sync_remove_device,
+            commands::sync_set_follow,
             commands::sync_leave,
             commands::sync_move_server,
         ])
