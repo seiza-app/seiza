@@ -405,7 +405,7 @@ Today the extension updates itself through the stores, but updating the app mean
   - **How the key reaches a new device.** The group has one key the server never sees. The two devices use the pairing code in a PAKE (SPAKE2, RustCrypto's `spake2` crate) through the server to agree on a one-off encrypted channel, and the key travels inside it, so the server can't learn it even though the code is short. To get right:
     - A maintained, reviewed crate for the PAKE, never our own; the rest is a standard AEAD (XChaCha20-Poly1305, with random nonces so two devices never reuse one) and a KDF.
     - One guess per code: a failed attempt burns it on both sides, and it expires. That leaves anyone, the server's owner included, about a 1 in 10¹³ chance.
-    - Key confirmation: both sides prove they agree before anything is sent, or stop.
+    - Key confirmation: both sides prove they agree before any secret (the group key, the sky) is sent, or stop; the joiner's name goes sealed with its proof.
     - The group's id and a purpose (`seiza pairing v1`) go into the exchange, so it can't be replayed or moved to another group.
     - Tests against XChaCha20-Poly1305's published test vector and values recorded from the SPAKE2 crate (it ships none of its own we can reach), so an update that changed either fails first; and an outside review before any hosted tier.
     - The key is kept in the app's database next to the sky's secret: it protects what's on the server, and the device already holds its own log.

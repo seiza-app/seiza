@@ -6,6 +6,9 @@
 targets = [
   "x86_64-unknown-linux-gnu",
   "aarch64-unknown-linux-gnu",
+  # The Docker image's.
+  "x86_64-unknown-linux-musl",
+  "aarch64-unknown-linux-musl",
   # For running it while developing.
   "aarch64-apple-darwin",
   "x86_64-apple-darwin",

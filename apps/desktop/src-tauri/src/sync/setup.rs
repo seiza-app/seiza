@@ -137,17 +137,23 @@ pub fn status(app: &AppHandle) -> Result<SyncStatus> {
     })
 }
 
-/// Turns Start sessions from my other computers here on or off. Turned on, it fetches, to join
-/// a session that's running elsewhere. A session already running here carries on either way.
+/// Turns Start sessions from my other computers here on or off. Turned on, it joins the session
+/// the group last said was running, as if it had just come in, then fetches, to catch up.
+/// Turned off, a session already running here carries on.
 pub fn set_follow(app: &AppHandle, on: bool) -> Result<()> {
-    {
-        let engine = crate::engine(app);
+    let joined = {
+        let mut engine = crate::engine(app);
         let mut settings = engine.sync_settings()?.ok_or(Error::NotSyncing)?;
         if settings.follow == on {
             return Ok(());
         }
         settings.follow = on;
-        engine.set_sync_settings(Some(&settings), crate::now_ms())?;
+        let now = crate::now_ms();
+        engine.set_sync_settings(Some(&settings), now)?;
+        on && super::exchange::join_live(&mut engine, &settings, now)?
+    };
+    if joined {
+        crate::changed(app);
     }
     emit_status(app);
     super::exchange::fetch(app);

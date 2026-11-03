@@ -5,8 +5,8 @@ one Rust program with one SQLite file, in one Docker image of a few megabytes. I
 thread in about 5 MB of memory, and answers in under a millisecond, ten devices at once included.
 
 It syncs each computer's finished sessions (with their goals), visits to redirected sites,
-constellation names and profiles. Live sessions, started on one computer and running on all of
-them, come next (PLAN.md §8, Sync, step 8).
+constellation names and profiles, and live sessions: one started on one computer starts on the
+others that follow the group's sessions (Settings › Sync).
 
 ## Setting it up, start to finish
 
@@ -184,14 +184,19 @@ In Docker, run them with `docker compose exec seiza-sync seiza-sync <command>`.
 ## Backups
 
 Every device keeps its whole log, so losing the server loses nothing: point your devices at a new
-one (Settings › Sync › **Move…**) and one of them uploads everything again. A backup just saves you re-pairing:
+one (Settings › Sync › **Move…**) and one of them uploads everything again. You can also back up
+the server's database:
 
 ```sh
 docker compose exec seiza-sync seiza-sync backup /data/backup.db
 docker compose cp seiza-sync:/data/backup.db ./seiza-sync-backup.db
 ```
 
-To restore, stop the server and put the backup in place of `/data/seiza-sync.db`.
+To restore, stop the server and put the backup in place of `/data/seiza-sync.db`. Then pair your
+computers again: **Leave sync…** on each, start a new group on one, and add the others to it with
+**Add a device**. Each sends everything it has. The app doesn't notice a restore yet, so without this
+your computers would skip what was sent between the backup and the restore, and some of what's
+sent after it.
 
 ## Protections
 
