@@ -24,6 +24,13 @@ describe('matchesPattern', () => {
     expect(matchesPattern('*://*.reddit.com/r/*', 'https://www.reddit.com/user/me')).toBe(false);
   });
 
+  it('ignores a trailing dot on the host', () => {
+    expect(matchesPattern('*://*.youtube.com/*', 'https://youtube.com./')).toBe(true);
+    expect(matchesPattern('*://*.youtube.com/*', 'https://www.youtube.com./watch')).toBe(true);
+    expect(matchesPattern('https://x.com/*', 'https://x.com./home')).toBe(true);
+    expect(matchesPattern('*://*.youtube.com/*', 'https://notyoutube.com./')).toBe(false);
+  });
+
   it('rejects malformed patterns and URLs', () => {
     expect(matchesPattern('reddit.com', 'https://reddit.com/')).toBe(false);
     expect(matchesPattern('*://*.reddit.com/*', 'not a url')).toBe(false);
@@ -44,6 +51,10 @@ describe('matchPatternToRegex', () => {
       'https://x.com/home',
       'http://x.com/home',
       'https://www.x.com/home',
+      'https://reddit.com./r/all',
+      'https://www.reddit.com.:8080/',
+      'https://x.com./home',
+      'https://reddit.com..evil.example/',
     ];
     for (const pattern of patterns) {
       for (const url of urls) {

@@ -138,4 +138,32 @@ describe('sites people add', () => {
     await setStored(control, { activeSession: null });
     await options.close();
   });
+
+  it('lets a site inside a redirected one load, and keeps the wider one away', async () => {
+    const list: Profile[] = (await stored(control)).profiles!;
+    const profileId = list[0]!.id;
+    await setStored(control, {
+      profiles: list.map((p) =>
+        p.id === profileId
+          ? {
+              ...p,
+              sites: [
+                ...p.sites.filter((x) => x.recipeId !== 'site:other.test'),
+                { recipeId: 'site:other.test', level: 'redirected' },
+                { recipeId: 'site:mail.other.test', level: 'tamed' },
+              ],
+            }
+          : p,
+      ),
+    });
+    await startSession(control, profileId);
+
+    const tab = await t.browser.newPage();
+    await tab.goto('http://mail.other.test/inbox');
+    expect(tab.url()).toBe('http://mail.other.test/inbox');
+    await tab.goto(other);
+    expect(tab.url()).toBe(redirectPage(t, other));
+    await setStored(control, { activeSession: null });
+    await tab.close();
+  });
 });

@@ -1,6 +1,16 @@
 import type { Page } from 'puppeteer';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { controlPage, launch, setProfileRedirect, startSession, stored, urls, type TestBrowser } from './harness';
+import {
+  controlPage,
+  launch,
+  redirectPage,
+  setProfileRedirect,
+  setStored,
+  startSession,
+  stored,
+  urls,
+  type TestBrowser,
+} from './harness';
 
 describe('the redirect page', () => {
   let t: TestBrowser;
@@ -137,5 +147,38 @@ describe('the redirect page', () => {
       const next = Math.min(50, expected + 20);
       expect(next - (await clockSeconds())).toBeLessThanOrEqual(1);
     });
+  });
+
+  it('stops and says so when the browser keeps sending the site back, rather than looping', async () => {
+    // A redirect rule left over from before, as if updating the rules had failed. The session
+    // has ended, so the page carries on to Reddit, which the old rule sends straight back.
+    await setStored(control, { activeSession: null });
+    await control.evaluate(
+      (substitution) =>
+        (globalThis as unknown as { chrome: typeof browser }).chrome.declarativeNetRequest.updateSessionRules({
+          addRules: [
+            {
+              id: 1,
+              priority: 1,
+              action: { type: 'redirect', redirect: { regexSubstitution: substitution } },
+              condition: { regexFilter: '^http://www\\.reddit\\.test/.*$', resourceTypes: ['main_frame'] },
+            },
+          ],
+        }),
+      // \0 is the full original URL.
+      redirectPage(t, '\\0'),
+    );
+
+    await tab.goto(urls.reddit).catch(() => undefined);
+    await expect
+      .poll(() => tab.evaluate(() => document.body.innerText), { timeout: 10_000 })
+      .toContain("Couldn't open Reddit");
+    expect(tab.url()).toBe(redirectPage(t, urls.reddit));
+
+    await control.evaluate(() =>
+      (globalThis as unknown as { chrome: typeof browser }).chrome.declarativeNetRequest.updateSessionRules({
+        removeRuleIds: [1],
+      }),
+    );
   });
 });

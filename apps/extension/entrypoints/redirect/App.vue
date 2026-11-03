@@ -39,6 +39,8 @@ const wait = ref<PageWait>();
 const attempts = ref(0);
 const visitId = ref('');
 const why = ref<WhyReason>();
+// Set when the browser keeps sending the site back here, so the page stops instead of looping.
+const stuck = ref(false);
 
 const siteName = computed(() => recipe.value?.name ?? '');
 const destinationText = computed(() => (target ? `${target.hostname.replace(/^www\./, '')}${target.pathname}` : ''));
@@ -70,7 +72,7 @@ onMounted(async () => {
     // The session ended or a pass started since this tab was sent here. Make sure the
     // redirect rules have caught up, then carry on to the site.
     await syncRedirectsNow();
-    location.replace(target.href);
+    openTarget();
     return;
   }
 
@@ -102,7 +104,37 @@ async function proceed(intention: string) {
   if (!target || !site) return;
   const id = visitId.value || (await recordGateVisit(site.id, 'page'));
   await continueToSite(id, site.id, intention);
+  openTarget();
+}
+
+// Remembered for this tab while it's open, so a redirect rule that's out of date can't loop.
+const lastOpenKey = 'seiza:last-open';
+const loopWindowMs = 3000;
+
+/**
+ * Carries on to the site, unless this tab was sent to the same address a moment ago and came
+ * straight back. Then the page says it couldn't open it, rather than trying again and again.
+ */
+function openTarget() {
+  if (!target) return;
+  const now = Date.now();
+  try {
+    const last = JSON.parse(sessionStorage.getItem(lastOpenKey) ?? 'null') as { href?: string; at?: number } | null;
+    if (last?.href === target.href && typeof last.at === 'number' && now - last.at < loopWindowMs) {
+      sessionStorage.removeItem(lastOpenKey);
+      stuck.value = true;
+      return;
+    }
+    sessionStorage.setItem(lastOpenKey, JSON.stringify({ href: target.href, at: now }));
+  } catch {
+    // Without session storage there's no guard, but the site still opens.
+  }
   location.replace(target.href);
+}
+
+function tryAgain() {
+  stuck.value = false;
+  openTarget();
 }
 
 function openSettings() {
@@ -132,7 +164,16 @@ function ordinal(n: number): string {
       >
     </p>
 
-    <template v-if="ready && settings">
+    <div v-if="stuck" class="card stage">
+      <h1 class="stuck">Couldn't open {{ siteName || 'this page' }}</h1>
+      <p class="body">The browser kept sending it back here. Give it a moment, then try again.</p>
+      <div class="actions">
+        <button type="button" class="primary" @click="backToFocus">Back to focus</button>
+        <button type="button" class="secondary" @click="tryAgain">Try again</button>
+      </div>
+    </div>
+
+    <template v-else-if="ready && settings">
       <p class="badge"><span class="dot" aria-hidden="true" />{{ badge }}</p>
 
       <div class="card stage">
@@ -229,6 +270,22 @@ h1 {
   margin: 0 0 24px;
   font-size: 28px;
   font-weight: 200;
+}
+
+h1.stuck {
+  margin: 0;
+}
+
+.body {
+  margin: 8px 0 24px;
+  color: var(--dim);
+  font-size: 15px;
+}
+
+.actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
 }
 
 footer {

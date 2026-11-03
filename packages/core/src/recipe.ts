@@ -55,10 +55,8 @@ export function buildRecipeCss(
     ...hidden.map((part) => part.selector),
   ].filter(isSafeSelector);
 
-  const rules: string[] = [];
-  if (selectors.length > 0) {
-    rules.push(`${selectors.join(',\n')} {\n  display: none !important;\n}`);
-  }
+  // One rule per selector, so a selector this browser can't read drops only its own rule.
+  const rules = selectors.map((selector) => `${selector} {\n  display: none !important;\n}`);
   if (enabled.some((toggle) => toggle.effect === 'grayscale')) {
     rules.push('html {\n  filter: grayscale(1) !important;\n}');
   }
