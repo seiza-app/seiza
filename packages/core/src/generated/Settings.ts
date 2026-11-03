@@ -15,9 +15,8 @@ passesPerWeek: number,
  */
 idleMinutes: number, 
 /**
- * Whether a Medium or Hard session closes a browser that runs without the extension
- * (and Hard counts the session as broken). Off, it only warns. Opt-in, so the app and
- * the extension can each be used on their own.
+ * Whether a Medium or Hard session closes a browser that runs without the extension.
+ * Off, it only warns. Opt-in, so the app and the extension can each be used on their own.
  */
 closeBrowsers: boolean, 
 /**

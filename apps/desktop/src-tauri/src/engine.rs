@@ -469,8 +469,6 @@ impl Engine {
         goal: Option<String>,
         now: i64,
     ) -> Result<bool> {
-        let loosens =
-            |old: &Profile, new: &Profile| new.sites_looser_than(old) || apps::looser(&old.apps(), &new.apps());
         let hard = current.lock(now) == Some(Strictness::Hard);
         let rules = match (&current.rules, rules) {
             (Some(old), Some(new)) if hard && loosens(old, &new) => None,
@@ -527,13 +525,16 @@ impl Engine {
     }
 
     /// Changes the app-wide settings. While a Hard session is running, passes per week can
-    /// only go down and closing browsers can't be turned off, or they'd be easy ways out.
+    /// only go down, closing browsers can't be turned off, and the idle time can't be turned
+    /// on or shortened, or they'd be easy ways out.
     pub fn set_settings(&mut self, settings: Settings, now: i64) -> Result<()> {
         let mut settings = settings.clamped();
         let hard = self.session().and_then(|s| s.lock(now)) == Some(Strictness::Hard);
+        let (old_idle, new_idle) = (self.settings.idle_minutes, settings.idle_minutes);
         let looser = settings.passes_per_week > self.settings.passes_per_week
             || (self.settings.close_browsers && !settings.close_browsers)
-            || (self.settings.block_without_extension && !settings.block_without_extension);
+            || (self.settings.block_without_extension && !settings.block_without_extension)
+            || (new_idle > 0 && (old_idle == 0 || new_idle < old_idle));
         if hard && looser {
             return Err(Error::Locked);
         }
@@ -939,6 +940,16 @@ impl Engine {
             }
 
             if let Some(new) = incoming.value.as_mut() {
+                // The same session keeps when it started and its profile: an earlier start could
+                // end its lock.
+                if let Some(c) = current.as_ref().filter(|_| same)
+                    && (new.started_at != c.started_at || new.profile_id != c.profile_id)
+                {
+                    new.started_at = c.started_at;
+                    new.profile_id = c.profile_id.clone();
+                    // Newer than the extension's copy, so it takes these when this is sent back.
+                    incoming.updated_at += 1;
+                }
                 let timer = match &current {
                     Some(c) if same && c.timer.is_some() => c.timer.clone(),
                     _ => new
@@ -946,9 +957,16 @@ impl Engine {
                         .clone()
                         .or_else(|| Some(self.profile(&new.profile_id).map(Profile::timer).unwrap_or_default())),
                 };
-                // An extension from before sessions had their own rules leaves them out.
+                // An extension from before sessions had their own rules leaves them out. And an
+                // older copy of a Hard session, or a tampered one, can't loosen its rules.
+                let hard = |c: &Session| same && c.lock(now) == Some(Strictness::Hard);
                 let rules = match &current {
                     Some(c) if same && new.rules.is_none() => c.rules.clone(),
+                    Some(c @ Session { rules: Some(old), .. })
+                        if hard(c) && new.rules.as_ref().is_some_and(|new| loosens(old, new)) =>
+                    {
+                        c.rules.clone()
+                    }
                     _ => new.rules.clone().or_else(|| self.profile(&new.profile_id).cloned()),
                 };
                 if new.timer != timer || new.rules != rules {
@@ -1559,6 +1577,12 @@ fn restamp(stamps: &mut BTreeMap<String, i64>, before: &[Profile], after: &[Prof
     for profile in changed.chain(gone) {
         stamps.insert(profile.id.clone(), at);
     }
+}
+
+/// Whether a session's rules would get looser going from `old` to `new`: fewer sites tamed or
+/// apps closed, or tamed less.
+fn loosens(old: &Profile, new: &Profile) -> bool {
+    new.sites_looser_than(old) || apps::looser(&old.apps(), &new.apps())
 }
 
 /// Makes the changes from `before` to `after` in `copy`, one top-level field at a time. With
@@ -2578,6 +2602,62 @@ mod tests {
     }
 
     #[test]
+    fn the_extensions_copy_of_a_hard_session_cant_loosen_its_rules() {
+        let mut engine = hard_engine();
+        engine.start_session("deep-work", MIN).unwrap();
+        let rules = engine.session().unwrap().rules.clone();
+
+        // An older copy of the session, saved with a newer stamp, with no sites at all.
+        let mut copy = engine.session().unwrap().clone();
+        copy.rules
+            .as_mut()
+            .unwrap()
+            .rest
+            .insert("sites".into(), serde_json::json!([]));
+        let sent = Synced {
+            value: Some(copy.clone()),
+            updated_at: 2 * MIN,
+        };
+        engine.apply_remote(None, None, Some(sent), 2 * MIN).unwrap();
+        assert_eq!(engine.session().unwrap().rules, rules);
+        assert!(engine.session_tames_sites(engine.session().unwrap()));
+        // Newer than the extension's copy, so it takes the app's back.
+        assert!(engine.synced().1.updated_at > 2 * MIN);
+
+        // Once the timer's done, its rules can change from the extension again.
+        let sent = Synced {
+            value: Some(copy),
+            updated_at: 60 * MIN,
+        };
+        engine.apply_remote(None, None, Some(sent), 60 * MIN).unwrap();
+        assert!(!engine.session_tames_sites(engine.session().unwrap()));
+    }
+
+    #[test]
+    fn the_extension_cant_move_a_sessions_start_or_profile() {
+        let mut engine = hard_engine();
+        engine.start_session("deep-work", 30 * MIN).unwrap();
+        let running = engine.session().unwrap().clone();
+
+        // Started an hour earlier, its 50-minute timer would be done, and it could be ended.
+        let mut copy = running.clone();
+        copy.started_at = 0;
+        copy.profile_id = "something-else".into();
+        let sent = Synced {
+            value: Some(copy),
+            updated_at: 31 * MIN,
+        };
+        engine.apply_remote(None, None, Some(sent), 31 * MIN).unwrap();
+        let session = engine.session().unwrap();
+        assert_eq!(
+            (session.started_at, &session.profile_id),
+            (running.started_at, &running.profile_id)
+        );
+        assert_eq!(session.lock(31 * MIN), Some(Strictness::Hard));
+        assert!(engine.synced().1.updated_at > 31 * MIN);
+    }
+
+    #[test]
     fn every_other_site_only_gets_stricter_during_a_hard_session() {
         use crate::sites::SiteLevel::*;
         let site = |id: &str, level| SiteRule {
@@ -2807,6 +2887,26 @@ mod tests {
         ));
         engine.set_settings(Settings::default(), 60 * MIN).unwrap();
         assert!(!engine.settings().block_without_extension);
+    }
+
+    #[test]
+    fn the_idle_time_cant_be_turned_on_or_shortened_during_a_hard_session() {
+        let mut engine = hard_engine();
+        let idle = |idle_minutes| Settings {
+            idle_minutes,
+            ..Settings::default()
+        };
+        engine.set_settings(idle(30), 0).unwrap();
+        engine.start_session("deep-work", 0).unwrap();
+        // Shorter, stepping away would end the session with no pass used.
+        assert!(matches!(engine.set_settings(idle(1), MIN), Err(Error::Locked)));
+        // Longer, or off, is stricter, so that's fine.
+        engine.set_settings(idle(45), MIN).unwrap();
+        engine.set_settings(idle(0), MIN).unwrap();
+        // But not turning it back on from off, until the timer's done.
+        assert!(matches!(engine.set_settings(idle(30), 2 * MIN), Err(Error::Locked)));
+        assert_eq!(engine.settings().idle_minutes, 0);
+        engine.set_settings(idle(1), 60 * MIN).unwrap();
     }
 
     #[test]
