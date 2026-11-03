@@ -32,6 +32,8 @@ const OWN_QUOTES: &str = "ownQuotes";
 const SESSION_GOAL: &str = "sessionGoal";
 const PROFILE_STAMPS: &str = "profileStamps";
 const SITE_SETTINGS: &str = "siteSettings";
+/// The running session's id, and when it was last known to be running (`note_alive`).
+const ALIVE: &str = "alive";
 /// This device's sync settings (sync/settings.rs), kept out of backups.
 const SYNC: &str = "sync";
 
@@ -416,6 +418,59 @@ impl Engine {
         let none = Synced {
             value: None,
             updated_at: now,
+        };
+        self.log_end(&mut record, none)?;
+        Ok(Some(record))
+    }
+
+    /// Notes that the running session is still running here, so if Seiza stops without ending
+    /// it (it crashes, or the computer turns off), it can end as of then (`last_alive`).
+    pub fn note_alive(&self, now: i64) -> Result<()> {
+        let Some(session) = self.session() else {
+            return Ok(());
+        };
+        let note = Synced {
+            value: session.id.clone(),
+            updated_at: now,
+        };
+        self.store.save(ALIVE, &note)
+    }
+
+    /// When the running session was last known to be running here: the last note of it, or
+    /// for one from before notes were kept, when it last changed.
+    pub fn last_alive(&self) -> Result<Option<i64>> {
+        let Some(session) = self.session() else {
+            return Ok(None);
+        };
+        let noted = self
+            .store
+            .load::<String>(ALIVE)?
+            .filter(|note| note.value == session.id)
+            .map(|note| note.updated_at);
+        Ok(Some(noted.unwrap_or(self.session.updated_at).max(session.started_at)))
+    }
+
+    /// Ends the running session as of `alive_at`, if it's still the one with this id, because
+    /// Seiza stopped without ending it and has started again. Like quitting, however strict it
+    /// was: a session's blocks shouldn't outlast the app.
+    pub fn end_session_from_before(
+        &mut self,
+        session_id: &str,
+        alive_at: i64,
+        now: i64,
+    ) -> Result<Option<SessionRecord>> {
+        let Some(session) = self.session().filter(|s| s.id == session_id) else {
+            return Ok(None);
+        };
+        let mut record = SessionRecord::new(
+            session,
+            &self.profile_name(&session.profile_id),
+            alive_at.min(now),
+            EndReason::Stopped,
+        );
+        let none = Synced {
+            value: None,
+            updated_at: now.max(self.session.updated_at + 1),
         };
         self.log_end(&mut record, none)?;
         Ok(Some(record))
@@ -2972,6 +3027,36 @@ mod tests {
         assert_eq!(engine.session_log().unwrap().len(), 1);
         // No emergency pass is used.
         assert_eq!(engine.passes_left(10 * MIN), engine.settings().passes_per_week);
+    }
+
+    #[test]
+    fn a_session_from_before_a_crash_ends_when_it_was_last_running() {
+        let mut engine = hard_engine();
+        assert_eq!(engine.last_alive().unwrap(), None);
+        let first = engine.start_session("deep-work", MIN).unwrap().id.clone();
+        engine.note_alive(10 * MIN).unwrap();
+        engine.note_alive(11 * MIN).unwrap();
+        assert_eq!(engine.last_alive().unwrap(), Some(11 * MIN));
+        // Only the session it's for is ended.
+        assert_eq!(
+            engine.end_session_from_before("other", 11 * MIN, 3 * 60 * MIN).unwrap(),
+            None
+        );
+
+        let record = engine
+            .end_session_from_before(&first, 11 * MIN, 3 * 60 * MIN)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (record.ended_at, record.focused_ms, record.end_reason),
+            (11 * MIN, 10 * MIN, EndReason::Stopped)
+        );
+        assert_eq!(engine.session(), None);
+        assert_eq!(engine.passes_left(3 * 60 * MIN), engine.settings().passes_per_week);
+
+        // A note from an earlier session doesn't count for the next, which counts from its start.
+        engine.start_session("deep-work", 4 * 60 * MIN).unwrap();
+        assert_eq!(engine.last_alive().unwrap(), Some(4 * 60 * MIN));
     }
 
     #[test]

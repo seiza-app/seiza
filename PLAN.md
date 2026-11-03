@@ -106,6 +106,7 @@ You can create, edit, duplicate, delete and reorder profiles, and take them to a
 - **Gentle**: a pause screen, then you can continue
 - **Medium**: to end early, type a random string (Cold Turkey-style)
 - **Hard**: can't end before the timer runs out. You get **emergency passes** instead (default 2 per week, configurable).
+- **What ends a session anyway:** quitting Seiza from the menu bar ends it, Hard or not (the menu says "End session and quit"), so its blocks don't outlast the app. If Seiza stops without ending it (it crashed, or the computer turned off), it ends when Seiza next starts, as of the last minute it was known to be running; on a computer that follows the sync group's sessions (§8), only if no other computer in the group is still running it. While a session runs, the app goes by the time that really went by (the time since the computer started, which counts sleep and can't be set), so setting the computer's clock ahead doesn't end a Hard session early. The extension still goes by the browser's clock for what it shows.
 
 ### The "quiet timer" (Pomodoro that doesn't cut you off)
 The timer is a *starting ramp*, not a cage.
