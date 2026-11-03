@@ -6,7 +6,8 @@ use crate::config::NewGroups;
 use crate::tokens;
 
 /// Each entry upgrades the database by one version. Add new ones to the end; never edit old ones.
-const MIGRATIONS: &[&str] = &[r#"
+const MIGRATIONS: &[&str] = &[
+    r#"
     CREATE TABLE groups (
         id TEXT PRIMARY KEY,
         created_at INTEGER NOT NULL,
@@ -41,7 +42,16 @@ const MIGRATIONS: &[&str] = &[r#"
         created_at INTEGER NOT NULL,
         expires_at INTEGER NOT NULL
     );
-"#];
+"#,
+    r#"
+    -- When the server first had a group, so a first-group-only server stays closed to groups
+    -- without an invite once it has had one, even after that group is gone. One row.
+    CREATE TABLE server (
+        first_group_at INTEGER
+    );
+    INSERT INTO server (first_group_at) SELECT MIN(created_at) FROM groups;
+"#,
+];
 
 /// How long an invite code from `seiza-sync invite` lasts.
 const INVITE_MS: i64 = 7 * DAY_MS;
@@ -86,8 +96,6 @@ pub struct NewDevice {
 #[derive(Debug)]
 pub enum CreateGroup {
     Created(NewDevice),
-    /// The server doesn't take new groups now.
-    Closed,
     /// Invites are needed, and this one is missing, wrong, used or expired.
     BadInvite,
 }
@@ -102,31 +110,32 @@ pub fn create_group(
 ) -> rusqlite::Result<CreateGroup> {
     // Immediate, so two first devices racing can't both see an empty server.
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    match new_groups {
-        NewGroups::FirstOnly => {
-            let groups: i64 = tx.query_row("SELECT COUNT(*) FROM groups", [], |row| row.get(0))?;
-            if groups > 0 {
-                return Ok(CreateGroup::Closed);
-            }
+    let needs_invite = match new_groups {
+        // Once the server has had a group, the owner's next one needs an invite too.
+        NewGroups::FirstOnly => tx.query_row("SELECT first_group_at IS NOT NULL FROM server", [], |row| row.get(0))?,
+        NewGroups::Invites => true,
+        NewGroups::Open => false,
+    };
+    if needs_invite {
+        let Some(invite) = invite else {
+            return Ok(CreateGroup::BadInvite);
+        };
+        let used = tx.execute(
+            "DELETE FROM invites WHERE code_hash = ?1 AND expires_at > ?2",
+            params![tokens::hash(invite.trim()), now],
+        )?;
+        if used == 0 {
+            return Ok(CreateGroup::BadInvite);
         }
-        NewGroups::Invites => {
-            let Some(invite) = invite else {
-                return Ok(CreateGroup::BadInvite);
-            };
-            let used = tx.execute(
-                "DELETE FROM invites WHERE code_hash = ?1 AND expires_at > ?2",
-                params![tokens::hash(invite.trim()), now],
-            )?;
-            if used == 0 {
-                return Ok(CreateGroup::BadInvite);
-            }
-        }
-        NewGroups::Open => {}
     }
     let group_id = tokens::random(16);
     tx.execute(
         "INSERT INTO groups (id, created_at) VALUES (?1, ?2)",
         params![group_id, now],
+    )?;
+    tx.execute(
+        "UPDATE server SET first_group_at = COALESCE(first_group_at, ?1)",
+        params![now],
     )?;
     let device = add_device(&tx, &group_id, label, now)?;
     tx.commit()?;
@@ -376,15 +385,34 @@ mod tests {
     }
 
     #[test]
-    fn first_group_only_closes_after_the_first_and_opens_when_it_is_gone() {
+    fn first_group_only_needs_an_invite_after_the_first_even_once_it_is_gone() {
         let mut db = open_in_memory().unwrap();
         let first = created(create_group(&mut db, b"laptop", NewGroups::FirstOnly, None, 1).unwrap());
         assert!(matches!(
             create_group(&mut db, b"other", NewGroups::FirstOnly, None, 2).unwrap(),
-            CreateGroup::Closed
+            CreateGroup::BadInvite
         ));
         assert!(remove_device(&mut db, &first.group_id, &first.device_id).unwrap());
-        created(create_group(&mut db, b"again", NewGroups::FirstOnly, None, 3).unwrap());
+        assert!(matches!(
+            create_group(&mut db, b"again", NewGroups::FirstOnly, None, 3).unwrap(),
+            CreateGroup::BadInvite
+        ));
+        let code = make_invite(&db, 4).unwrap();
+        created(create_group(&mut db, b"again", NewGroups::FirstOnly, Some(&code), 5).unwrap());
+    }
+
+    #[test]
+    fn a_server_from_before_remembers_it_had_a_group() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(MIGRATIONS[0]).unwrap();
+        db.pragma_update(None, "user_version", 1).unwrap();
+        db.execute("INSERT INTO groups (id, created_at) VALUES ('g', 7)", [])
+            .unwrap();
+        let mut db = migrated(db).unwrap();
+        assert!(matches!(
+            create_group(&mut db, b"other", NewGroups::FirstOnly, None, 8).unwrap(),
+            CreateGroup::BadInvite
+        ));
     }
 
     #[test]

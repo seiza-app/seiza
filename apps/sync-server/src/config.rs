@@ -7,8 +7,9 @@ use axum::http::HeaderName;
 /// Who can start a new sync group on this server (PLAN §8, Sync).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NewGroups {
-    /// A group can be started only while the server has none, so the owner's first device starts
-    /// theirs and then the server is closed to new ones. The default.
+    /// The first group needs nothing, so the owner's first device starts theirs, and then the
+    /// server is closed for good: each group after it needs an invite code, as with `Invites`,
+    /// even once the first is gone. The default.
     FirstOnly,
     /// Each new group needs a one-time invite code from `seiza-sync invite`.
     Invites,
