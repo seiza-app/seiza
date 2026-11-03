@@ -5,10 +5,11 @@ const value = defineModel<number>({ required: true });
 
 const within = (next: number) => Math.min(props.max, Math.max(props.min, next));
 
-// Commits on change rather than every keystroke, and snaps the field back into range.
+// Commits on change rather than every keystroke, and snaps the field back into range. Cleared,
+// it goes back to the value it had.
 function commit(event: Event) {
   const input = event.target as HTMLInputElement;
-  const parsed = Math.round(Number(input.value));
+  const parsed = input.value.trim() === '' ? NaN : Math.round(Number(input.value));
   const next = Number.isFinite(parsed) ? within(parsed) : value.value;
   input.value = String(next);
   value.value = next;

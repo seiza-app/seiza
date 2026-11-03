@@ -216,6 +216,14 @@ const loadSky = async () => {
   sky.value ??= await skyState();
   resisted.value = await turnedBack();
 };
+// Reads the sky again, which a backup or sync may have brought, without clearing what's drawn
+// meanwhile. When it last showed new things only moves on, so nothing plays twice.
+const reloadSky = async () => {
+  const read = await skyState();
+  const seenAt = Math.max(read.seenAt, sky.value?.seenAt ?? 0);
+  sky.value = { ...read, seenAt };
+  resisted.value = await turnedBack();
+};
 onMounted(() => run(loadSky));
 const rare = computed(() => (sky.value ? rareEvents(log.value, sky.value.secret) : []));
 const allComets = computed(() => (sky.value ? comets(resisted.value, sky.value.secret) : []));
@@ -374,14 +382,14 @@ const sampleData = (action: 'add' | 'remove') =>
 // A backup brings in more of the log, and maybe the sky's secret (on a computer with no sky of its
 // own yet), so the sky is read again. So does sync, with sessions, trips and names from the
 // group's other computers, and the group's sky once this one joins.
-const imported = () =>
-  run(async () => {
-    sky.value = undefined;
-    await loadLog();
-    await loadNames();
-    await loadSky();
-  });
-onSynced(imported);
+const readAgain = async () => {
+  await loadLog();
+  await loadNames();
+  await reloadSky();
+};
+const imported = () => run(readAgain);
+// Sync happens in the background, so it leaves any error showing.
+onSynced(() => run(readAgain, { keepError: true }));
 
 const inState = (state: SatelliteState) => snapshot.value?.satellites.filter((s) => s.state === state) ?? [];
 const satellites = computed(() => ({
@@ -461,8 +469,8 @@ function answerUpdate(action: 'install' | 'later' | 'notes') {
   else void run(installUpdate);
 }
 
-async function run(action: () => Promise<void>) {
-  error.value = '';
+async function run(action: () => Promise<void>, { keepError = false } = {}) {
+  if (!keepError) error.value = '';
   try {
     await action();
   } catch (reason) {
