@@ -40,7 +40,7 @@ Seiza has no accounts and no telemetry. Everything stays on your device unless y
 
 ## Sync between your computers
 
-Optional, and off until you set it up. Your finished sessions and their goals, the session running now, visits to redirected sites, constellation names, profiles and each computer's name reach every computer in your sync group, so each one draws the same sky, streaks and weekly report, and a session started on one runs on all of them. Settings stay per computer.
+Optional, and off until you set it up. Your finished sessions and their goals, the session running now, visits to redirected sites, constellation names, profiles, satellites and each computer's name reach every computer in your sync group, so each one draws the same sky, streaks and weekly report, and a session started on one runs on all of them. Settings stay per computer.
 
 - **End-to-end encrypted.** The app encrypts everything before it's sent, with a key the server never gets. The server sees which computers are in a group, when they sync or are connected, how much they store and the IP addresses they connect from, and nothing else.
 - **No accounts.** Your first computer starts a group, and each other computer joins with a short one-time pairing code shown on one already in it.

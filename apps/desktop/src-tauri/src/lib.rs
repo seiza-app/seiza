@@ -121,13 +121,15 @@ pub(crate) fn quit(app: &AppHandle) {
     });
 }
 
-/// Tells the window and the menu bar that satellites changed. Nothing else depends on them.
+/// Tells the window and the menu bar that satellites changed, and sends the change to the sync
+/// group. Nothing else depends on them.
 pub(crate) fn satellites_changed(app: &AppHandle) {
     let snapshot = engine(app).snapshot(now_ms());
     let _ = app.emit("snapshot", &snapshot);
     if let Err(error) = tray::refresh(app, &snapshot) {
         eprintln!("Seiza: couldn't update the menu bar: {error}");
     }
+    sync::exchange::send(app);
 }
 
 /// Tells the window and the menu bar about a change, schedules the session's timer, idle

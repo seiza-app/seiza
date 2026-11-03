@@ -528,13 +528,8 @@ impl Engine {
         if self.session().is_none_or(|s| s.id != id) {
             return Ok(false);
         }
-        for satellite in &mut self.satellites {
-            if satellite.state == SatelliteState::Orbiting {
-                self.store.move_satellite(&satellite.id, SatelliteState::Back, now)?;
-                satellite.state = SatelliteState::Back;
-                satellite.state_at = now;
-            }
-        }
+        self.store.bring_back_satellites(id, now)?;
+        self.satellites = self.store.shown_satellites(now - DONE_TASKS_SHOWN_MS)?;
         let none = Synced {
             value: None,
             updated_at: now.max(self.session.updated_at + 1),
@@ -1036,12 +1031,7 @@ impl Engine {
             .map(|g| g.text.clone());
         self.store.end_session(record, ACTIVE_SESSION, &replacement)?;
         self.session = replacement;
-        for satellite in &mut self.satellites {
-            if satellite.state == SatelliteState::Orbiting {
-                satellite.state = SatelliteState::Back;
-                satellite.state_at = record.ended_at;
-            }
-        }
+        self.satellites = self.store.shown_satellites(record.ended_at - DONE_TASKS_SHOWN_MS)?;
         Ok(())
     }
 
@@ -1105,14 +1095,19 @@ impl Engine {
     }
 
     /// Saves records sync fetched from other devices, where they win over the copy here.
-    /// Emergency passes used elsewhere count here too, since they're in the log, and a running
-    /// session that's been logged elsewhere has ended. Returns how many changed something.
+    /// Emergency passes used elsewhere count here too, since they're in the log, a running
+    /// session that's been logged elsewhere has ended, and the satellites are one list, so one
+    /// that came back or was ticked off elsewhere has here too. Returns how many changed
+    /// something.
     pub fn apply_records(&mut self, records: &[Record], now: i64) -> Result<usize> {
         let applied = self.store.apply(records)?;
         if applied > 0 {
             self.pass_uses = self.store.pass_uses()?;
             if records.iter().any(|r| matches!(r, Record::Profile(_))) {
                 self.take_synced_profiles(now)?;
+            }
+            if records.iter().any(|r| matches!(r, Record::Satellite(_))) {
+                self.satellites = self.store.shown_satellites(now - DONE_TASKS_SHOWN_MS)?;
             }
             let logged = |id: &str| {
                 records.iter().find_map(|r| match r {
@@ -1852,7 +1847,9 @@ mod tests {
         assert_eq!(satellites(&here), vec![("reply to Sam", SatelliteState::Back)]);
         let log = here.session_log().unwrap();
         assert_eq!((log.len(), log[0].ended_at), (1, 30 * MIN));
-        assert_eq!(here.changed_records(0, 100).unwrap().0, vec![]);
+        // Only the satellite launched here is sent from here.
+        let sent = here.changed_records(0, 100).unwrap().0;
+        assert!(matches!(&sent[..], [Record::Satellite(s)] if s.state == SatelliteState::Back));
         assert_eq!(
             here.snapshot(31 * MIN).goal_to_answer.map(|g| g.text),
             Some("Write the intro".into())
@@ -3142,6 +3139,46 @@ mod tests {
         };
         engine.apply_remote(None, None, Some(ended), 5 * MIN).unwrap();
         assert_eq!(satellites(&engine), vec![("browser", SatelliteState::Back)]);
+    }
+
+    #[test]
+    fn satellites_are_one_list_across_the_sync_group() {
+        let (mut here, mut there) = (engine(), engine());
+        here.launch_satellite("call Sam", MIN).unwrap();
+        there
+            .apply_records(&here.changed_records(0, 100).unwrap().0, 2 * MIN)
+            .unwrap();
+        assert_eq!(satellites(&there), vec![("call Sam", SatelliteState::Orbiting)]);
+
+        // A session ending there brings it back here too.
+        there.start_session("writing", 3 * MIN).unwrap();
+        there.end_session(30 * MIN, EndReason::Stopped).unwrap();
+        here.apply_records(&there.changed_records(0, 100).unwrap().0, 31 * MIN)
+            .unwrap();
+        assert_eq!(satellites(&here), vec![("call Sam", SatelliteState::Back)]);
+
+        // Ticked off here, it's gone there.
+        let (_, sent) = here.changed_records(0, 100).unwrap();
+        here.act_on_satellite(&satellite_id(&here, "call Sam"), SatelliteAction::Done, 32 * MIN)
+            .unwrap();
+        there
+            .apply_records(&here.changed_records(sent, 100).unwrap().0, 33 * MIN)
+            .unwrap();
+        assert_eq!(satellites(&there), vec![]);
+
+        // One launched in a session still going there waits for that one, not one here.
+        let (_, sent) = there.changed_records(0, 100).unwrap();
+        there.start_session("writing", 40 * MIN).unwrap();
+        there.launch_satellite("buy milk", 41 * MIN).unwrap();
+        here.apply_records(&there.changed_records(sent, 100).unwrap().0, 42 * MIN)
+            .unwrap();
+        here.start_session("writing", 43 * MIN).unwrap();
+        here.end_session(50 * MIN, EndReason::Stopped).unwrap();
+        assert_eq!(satellites(&here), vec![("buy milk", SatelliteState::Orbiting)]);
+        there.end_session(60 * MIN, EndReason::Stopped).unwrap();
+        here.apply_records(&there.changed_records(sent, 100).unwrap().0, 61 * MIN)
+            .unwrap();
+        assert_eq!(satellites(&here), vec![("buy milk", SatelliteState::Back)]);
     }
 
     #[test]

@@ -155,6 +155,15 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     UPDATE change_counter SET last = last + (SELECT COALESCE(MAX(rowid), 0) FROM profiles);
     CREATE INDEX profiles_change_seq ON profiles (change_seq);
 "#,
+    // Satellites sync too (records.rs): each gets when it last changed, and a number from the
+    // counter of changes made here, so the ones here so far are sent.
+    r#"
+    ALTER TABLE satellites ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE satellites ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;
+    UPDATE satellites SET updated_at = state_at, change_seq = rowid + (SELECT last FROM change_counter);
+    UPDATE change_counter SET last = last + (SELECT COALESCE(MAX(rowid), 0) FROM satellites);
+    CREATE INDEX satellites_change_seq ON satellites (change_seq);
+"#,
 ];
 
 impl Store {
@@ -218,14 +227,15 @@ impl Store {
         let change = records::next_change(&tx)?;
         insert_session(&tx, record, record.ended_at, change)?;
         save(&tx, key, synced)?;
-        tx.execute(
-            "UPDATE satellites SET state = ?1, state_at = ?2 WHERE state = ?3",
-            params![
-                SatelliteState::Back.as_str(),
-                record.ended_at,
-                SatelliteState::Orbiting.as_str()
-            ],
-        )?;
+        bring_back(&tx, &record.id, record.ended_at)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Brings satellites back because `session_id` ended on another computer, which logs it.
+    pub fn bring_back_satellites(&mut self, session_id: &str, now: i64) -> Result<()> {
+        let tx = self.db.transaction()?;
+        bring_back(&tx, session_id, now)?;
         tx.commit()?;
         Ok(())
     }
@@ -235,8 +245,9 @@ impl Store {
     pub fn save_satellite(&self, satellite: &Satellite, session_id: Option<&str>) -> Result<bool> {
         let tasked = matches!(satellite.state, SatelliteState::Task | SatelliteState::Done);
         let added = self.db.execute(
-            "INSERT OR IGNORE INTO satellites (id, text, launched_at, session_id, state, state_at, tasked_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT OR IGNORE INTO satellites (id, text, launched_at, session_id, state, state_at, tasked_at,
+                updated_at, change_seq)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?6, ?8)",
             params![
                 satellite.id,
                 satellite.text,
@@ -244,7 +255,8 @@ impl Store {
                 session_id,
                 satellite.state.as_str(),
                 satellite.state_at,
-                tasked.then_some(satellite.state_at)
+                tasked.then_some(satellite.state_at),
+                records::next_change(&self.db)?
             ],
         )?;
         Ok(added > 0)
@@ -252,17 +264,7 @@ impl Store {
 
     /// Moves a satellite to `state`, counting snoozes and when it first became a task.
     pub fn move_satellite(&self, id: &str, state: SatelliteState, now: i64) -> Result<()> {
-        let extra = match state {
-            SatelliteState::Orbiting => ", snoozes = snoozes + 1",
-            SatelliteState::Task => ", tasked_at = COALESCE(tasked_at, ?3)",
-            SatelliteState::Deleted => ", text = ''",
-            SatelliteState::Back | SatelliteState::Done => "",
-        };
-        self.db.execute(
-            &format!("UPDATE satellites SET state = ?2, state_at = ?3{extra} WHERE id = ?1"),
-            params![id, state.as_str(), now],
-        )?;
-        Ok(())
+        move_satellite(&self.db, id, state, now)
     }
 
     /// The satellites still in orbit, back or on the task list, and tasks ticked off since
@@ -572,8 +574,9 @@ impl Store {
         }
         for satellite in &history.satellites {
             report.satellites += tx.execute(
-                "INSERT OR IGNORE INTO satellites (id, text, launched_at, session_id, state, state_at, snoozes, tasked_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                "INSERT OR IGNORE INTO satellites (id, text, launched_at, session_id, state, state_at, snoozes, tasked_at,
+                    updated_at, change_seq)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?6, ?9)",
                 params![
                     satellite.id,
                     satellite.text,
@@ -583,6 +586,7 @@ impl Store {
                     satellite.state_at,
                     satellite.snoozes,
                     satellite.tasked_at,
+                    records::next_change(&tx)?,
                 ],
             )? as u32;
         }
@@ -661,6 +665,43 @@ impl Store {
 
 /// Saves a session to the log, replacing any with its id. `change` is its number from the
 /// counter of changes made here (records.rs), or 0 for one that came from another device.
+/// Moves a satellite to `state`, counting snoozes and when it first became a task, as a change
+/// made here.
+fn move_satellite(db: &Connection, id: &str, state: SatelliteState, now: i64) -> Result<()> {
+    let extra = match state {
+        SatelliteState::Orbiting => ", snoozes = snoozes + 1",
+        SatelliteState::Task => ", tasked_at = COALESCE(tasked_at, ?3)",
+        SatelliteState::Deleted => ", text = ''",
+        SatelliteState::Back | SatelliteState::Done => "",
+    };
+    db.execute(
+        &format!(
+            "UPDATE satellites SET state = ?2, state_at = ?3, updated_at = MAX(?3, updated_at + 1),
+                change_seq = ?4{extra} WHERE id = ?1"
+        ),
+        params![id, state.as_str(), now, records::next_change(db)?],
+    )?;
+    Ok(())
+}
+
+/// Brings back the satellites in orbit as a session ends: those launched in it, between
+/// sessions, or in one that's already ended. One launched in a session still going on another
+/// computer waits for that one to end.
+fn bring_back(db: &Connection, ended: &str, at: i64) -> Result<()> {
+    let mut statement = db.prepare(
+        "SELECT id FROM satellites WHERE state = ?1
+            AND (session_id IS NULL OR session_id = ?2 OR session_id IN (SELECT id FROM sessions))
+         ORDER BY rowid",
+    )?;
+    let ids = statement
+        .query_map(params![SatelliteState::Orbiting.as_str(), ended], |row| row.get(0))?
+        .collect::<rusqlite::Result<Vec<String>>>()?;
+    for id in ids {
+        move_satellite(db, &id, SatelliteState::Back, at)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn insert_session(db: &Connection, record: &SessionRecord, updated_at: i64, change: i64) -> Result<()> {
     db.execute(
         "INSERT OR REPLACE INTO sessions (id, profile_id, profile_name, started_at, ended_at, timer_minutes,

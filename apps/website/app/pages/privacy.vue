@@ -98,10 +98,10 @@ usePageSeo({
         <li class="reveal" style="--d: 260ms">
           <strong>What sync sends:</strong> your finished sessions and their goals, the session running now (with its
           goal and its profile's rules, so it runs on your other computers too), your visits to redirected sites, your
-          constellation names, your profiles and this computer's name. It keeps one connection open to the server, so
-          changes arrive within seconds. Before a session ends because you're away, the app asks your other computers
-          how long it's been since their keyboard or mouse was used; the server passes the question and the answers on
-          without keeping them.
+          constellation names, your profiles, your satellites (what each one says and what became of it) and this
+          computer's name. It keeps one connection open to the server, so changes arrive within seconds. Before a
+          session ends because you're away, the app asks your other computers how long it's been since their keyboard or
+          mouse was used; the server passes the question and the answers on without keeping them.
         </li>
         <li class="reveal" style="--d: 300ms">
           <strong>What the server sees:</strong> all of it is encrypted on your computer with a key the server never
@@ -110,7 +110,9 @@ usePageSeo({
         </li>
         <li class="reveal" style="--d: 340ms">
           <strong>Leave sync</strong> in Settings › Sync stops this computer syncing and keeps everything on it, and the
-          server deletes your group once its last computer leaves.
+          server deletes your group once its last computer leaves. Until then it keeps everything it was sent, so
+          something you delete, like a satellite, is gone from your computers but still in an earlier encrypted batch on
+          the server, which only your computers can read.
         </li>
       </ul>
       <p class="aside reveal" style="--d: 380ms">
@@ -128,7 +130,7 @@ usePageSeo({
         <a href="https://github.com/seiza-app/seiza">github.com/seiza-app/seiza</a>, so you can check any of it.
         Questions go to the repository's <a href="https://github.com/seiza-app/seiza/issues">issues</a>.
       </p>
-      <p class="aside mono reveal" style="--d: 220ms">Last updated: 2 November 2026</p>
+      <p class="aside mono reveal" style="--d: 220ms">Last updated: 3 November 2026</p>
       <SiteFooter class="reveal" style="--d: 280ms" />
     </section>
   </div>
