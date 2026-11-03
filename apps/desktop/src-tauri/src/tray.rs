@@ -67,7 +67,15 @@ fn menu(app: &AppHandle, snapshot: &Snapshot) -> tauri::Result<Menu<Wry>> {
         .separator()
         .item(&launch)
         .text("open", "Open Seiza…")
-        .text("quit", "Quit Seiza")
+        // Quitting ends a running session, so it says so.
+        .text(
+            "quit",
+            if snapshot.session.is_some() {
+                "End session and quit"
+            } else {
+                "Quit Seiza"
+            },
+        )
         .build()
 }
 
@@ -90,7 +98,7 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent) {
         "open" | "back" => crate::open_window(app),
         "satellite" => crate::capture::open(app),
         "quit" => {
-            app.exit(0);
+            crate::quit(app);
             Ok(())
         }
         _ => match id.strip_prefix(START_PREFIX) {

@@ -80,6 +80,11 @@ pub fn fetch(app: &AppHandle) {
     soon(app, true);
 }
 
+/// Sends what's changed here straight away, for when the app is about to quit.
+pub async fn send_now(app: &AppHandle) {
+    exchange(app, false).await;
+}
+
 /// Why the last exchange stopped, if it was something more than being offline.
 pub fn problem(app: &AppHandle) -> Option<String> {
     pending(app).problem.clone()

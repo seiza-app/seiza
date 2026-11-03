@@ -386,6 +386,26 @@ impl Engine {
         Ok(record)
     }
 
+    /// Ends the running session because Seiza is quitting, however strict it is. The app doesn't
+    /// stand in the way of quitting, and a session's blocks shouldn't outlast it.
+    pub fn end_session_to_quit(&mut self, now: i64) -> Result<Option<SessionRecord>> {
+        let Some(session) = self.session() else {
+            return Ok(None);
+        };
+        let mut record = SessionRecord::new(
+            session,
+            &self.profile_name(&session.profile_id),
+            now,
+            EndReason::Stopped,
+        );
+        let none = Synced {
+            value: None,
+            updated_at: now,
+        };
+        self.log_end(&mut record, none)?;
+        Ok(Some(record))
+    }
+
     /// Ends the session for being idle, if it's still the one with this id. Only the time up
     /// to the last input counts. Strictness doesn't apply: there's no one there to keep in.
     pub fn end_idle_session(&mut self, session_id: &str, last_input: i64, now: i64) -> Result<Option<SessionRecord>> {
@@ -2931,6 +2951,27 @@ mod tests {
         };
         engine.apply_remote(None, None, Some(ended), 60 * MIN).unwrap();
         assert_eq!(engine.session(), None);
+    }
+
+    #[test]
+    fn quitting_ends_a_session_even_a_hard_one() {
+        let mut engine = hard_engine();
+        assert!(engine.end_session_to_quit(MIN).unwrap().is_none());
+        let id = engine.start_session("deep-work", 1_000).unwrap().id.clone();
+        assert!(matches!(
+            engine.end_session(10 * MIN, EndReason::Stopped),
+            Err(Error::Locked)
+        ));
+
+        let record = engine.end_session_to_quit(10 * MIN).unwrap().unwrap();
+        assert_eq!(
+            (record.id.as_str(), record.end_reason),
+            (id.as_str(), EndReason::Stopped)
+        );
+        assert_eq!(engine.session(), None);
+        assert_eq!(engine.session_log().unwrap().len(), 1);
+        // No emergency pass is used.
+        assert_eq!(engine.passes_left(10 * MIN), engine.settings().passes_per_week);
     }
 
     #[test]

@@ -86,6 +86,41 @@ pub(crate) fn end_session(app: &AppHandle, reason: EndReason) -> Result<()> {
     Ok(())
 }
 
+/// Quits from the menu bar. A running session ends first, a Hard one too: Seiza doesn't stand in
+/// the way of quitting, and this way its blocks lift now, not once the helper's lease runs out.
+/// It waits a moment, so the helper, the extension and the sync group hear before it goes.
+pub(crate) fn quit(app: &AppHandle) {
+    match engine(app).end_session_to_quit(now_ms()) {
+        Ok(Some(_)) => {}
+        Ok(None) => return app.exit(0),
+        Err(error) => {
+            eprintln!("Seiza: couldn't end the session before quitting: {error}");
+            return app.exit(0);
+        }
+    }
+    changed(app);
+    let unblock = app
+        .state::<BlockerTask>()
+        .0
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .task
+        .take();
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let heard = async {
+            // The extension's links write in tasks of their own.
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            if let Some(unblock) = unblock {
+                let _ = unblock.await;
+            }
+            sync::exchange::send_now(&app).await;
+        };
+        let _ = tokio::time::timeout(Duration::from_secs(4), heard).await;
+        app.exit(0);
+    });
+}
+
 /// Tells the window and the menu bar that satellites changed. Nothing else depends on them.
 pub(crate) fn satellites_changed(app: &AppHandle) {
     let snapshot = engine(app).snapshot(now_ms());
