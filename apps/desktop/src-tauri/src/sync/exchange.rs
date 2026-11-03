@@ -240,7 +240,8 @@ async fn fetch_batches(app: &AppHandle, client: &Client, settings: &mut SyncSett
             let (live, taken) = if settings.follow {
                 take_lives(&mut engine, lives, now)?
             } else {
-                (None, false)
+                // Not taken, but kept, so turning following on can join it (`join_live`).
+                (lives.pop(), false)
             };
             (applied, live, taken)
         };
@@ -288,6 +289,19 @@ fn take_lives(
         last = Some(live);
     }
     Ok((last, changed))
+}
+
+/// Joins the session the group last said was running, for a computer that's just started
+/// following the group's sessions. Returns whether anything changed here.
+pub(super) fn join_live(
+    engine: &mut crate::engine::Engine,
+    settings: &SyncSettings,
+    now: i64,
+) -> std::result::Result<bool, Error> {
+    match settings.live.clone().filter(|live| live.running.is_some()) {
+        Some(live) => Ok(take_lives(engine, vec![live], now)?.1),
+        None => Ok(false),
+    }
 }
 
 /// The session running here, to tell the group, or the one that ended here: once it's no longer
@@ -610,6 +624,25 @@ mod tests {
         assert!(changed);
         assert_eq!(last, Some(ended));
         assert!(here.session().is_none());
+    }
+
+    #[test]
+    fn following_again_joins_the_session_the_group_last_said_was_running() {
+        let mut there = engine();
+        let mut here = engine();
+        let mut settings = settings();
+        settings.follow = false;
+        there.start_session("writing", 1).unwrap();
+        let running = live_here(&there, &self::settings()).unwrap();
+        let id = running.running.as_ref().unwrap().session.id.clone();
+        settings.live = Some(GroupSession {
+            running: None,
+            ended: Some("older".into()),
+        });
+        assert!(!join_live(&mut here, &settings, 2).unwrap());
+        settings.live = Some(running);
+        assert!(join_live(&mut here, &settings, 2).unwrap());
+        assert_eq!(here.session().unwrap().id, id);
     }
 
     #[test]
