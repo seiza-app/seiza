@@ -51,7 +51,8 @@ export function matchPatternToRegex(pattern: string, pathSource?: string): strin
   else if (parsed.host.startsWith('*.')) host = `([^/:]+\\.)?${escapeRegExp(parsed.host.slice(2))}`;
   else host = escapeRegExp(parsed.host);
 
-  return `^${scheme}://${host}(:[0-9]+)?${pathSource ?? globToRegExpSource(parsed.path)}$`;
+  // A trailing dot ("youtube.com.") names the same host.
+  return `^${scheme}://${host}\\.?(:[0-9]+)?${pathSource ?? globToRegExpSource(parsed.path)}$`;
 }
 
 function parsePattern(pattern: string): { scheme: string; host: string; path: string } | null {
@@ -61,8 +62,9 @@ function parsePattern(pattern: string): { scheme: string; host: string; path: st
   return { scheme: scheme!, host: host!, path: path! };
 }
 
-function hostMatches(patternHost: string, hostname: string): boolean {
+function hostMatches(patternHost: string, rawHostname: string): boolean {
   if (patternHost === '*') return true;
+  const hostname = rawHostname.replace(/\.$/, '');
   if (patternHost.startsWith('*.')) {
     const base = patternHost.slice(2);
     return hostname === base || hostname.endsWith(`.${base}`);

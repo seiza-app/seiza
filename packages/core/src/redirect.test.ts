@@ -120,6 +120,85 @@ describe('redirectRules', () => {
   });
 });
 
+describe('sites inside other sites', () => {
+  const own = (domain: string): SiteRecipe => ({
+    id: `site:${domain}`,
+    name: domain,
+    matches: [`*://*.${domain}/*`],
+    toggles: [],
+  });
+  // Sites someone added come longest address first, as `siteRecipes` lists them.
+  const known = [...recipes, own('mail.example.com'), own('example.com')];
+  const nested = (sites: Profile['sites'], otherSites?: Profile['otherSites']): Profile[] => [
+    { id: 'deep', name: 'Deep', otherSites, sites },
+  ];
+  const rules = (list: Profile[]) => redirectRules({ session, profiles: list, recipes: known, now });
+  // At the same priority, an allow rule wins over a redirect, as in the browser.
+  const blocks = (list: RedirectRule[], url: string) => {
+    const matching = list.filter((rule) => new RegExp(rule.regexFilter, 'i').test(url));
+    const top = matching.sort((a, b) => b.priority - a.priority || (a.action === 'allow' ? -1 : 1))[0];
+    return top?.action === 'redirect';
+  };
+
+  it('lets an open site inside a redirected one load', () => {
+    const list = rules(
+      nested([
+        { recipeId: 'site:example.com', level: 'redirected' },
+        { recipeId: 'site:mail.example.com', level: 'tamed' },
+      ]),
+    );
+    expect(blocks(list, 'https://example.com/')).toBe(true);
+    expect(blocks(list, 'https://www.example.com/a')).toBe(true);
+    expect(blocks(list, 'https://mail.example.com/inbox')).toBe(false);
+  });
+
+  it('treats a site inside another, listed only on some other profile, as one of every other site', () => {
+    const list = (otherSites?: Profile['otherSites']) =>
+      rules(nested([{ recipeId: 'site:example.com', level: 'redirected' }], otherSites));
+    expect(blocks(list(), 'https://mail.example.com/inbox')).toBe(false);
+    expect(blocks(list('redirected'), 'https://mail.example.com/inbox')).toBe(true);
+    expect(
+      blocks(
+        rules(nested([{ recipeId: 'site:example.com', level: 'allowed' }], 'restricted')),
+        'https://mail.example.com/',
+      ),
+    ).toBe(true);
+  });
+
+  it('redirects a closed site inside an open one, even with every other site closed', () => {
+    const list = rules(
+      nested(
+        [
+          { recipeId: 'site:example.com', level: 'allowed' },
+          { recipeId: 'site:mail.example.com', level: 'redirected' },
+        ],
+        'restricted',
+      ),
+    );
+    expect(blocks(list, 'https://example.com/')).toBe(false);
+    expect(blocks(list, 'https://mail.example.com/inbox')).toBe(true);
+    expect(blocks(list, 'https://elsewhere.org/')).toBe(true);
+  });
+
+  it("keeps the wider site's page rules off the site inside it", () => {
+    const list = rules(
+      nested([
+        { recipeId: 'site:example.com', level: 'allowed', paths: [{ path: '/', level: 'redirected' }] },
+        { recipeId: 'site:mail.example.com', level: 'allowed', paths: [{ path: '/news', level: 'restricted' }] },
+      ]),
+    );
+    expect(blocks(list, 'https://example.com/')).toBe(true);
+    expect(blocks(list, 'https://mail.example.com/')).toBe(false);
+    expect(blocks(list, 'https://mail.example.com/news')).toBe(true);
+  });
+
+  it('catches an address with a trailing dot', () => {
+    const list = rules(nested([{ recipeId: 'site:example.com', level: 'redirected' }]));
+    expect(blocks(list, 'https://example.com./')).toBe(true);
+    expect(blocks(redirectRules({ session, profiles, recipes, now }), 'https://www.reddit.com./r/all')).toBe(true);
+  });
+});
+
 describe('passes', () => {
   it('lasts the given number of minutes', () => {
     const passed = withPass(session, 'reddit', now, 5);

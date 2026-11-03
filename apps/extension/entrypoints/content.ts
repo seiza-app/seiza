@@ -110,12 +110,15 @@ export default defineContentScript({
       if (!selector) return;
       for (const media of document.querySelectorAll<HTMLMediaElement>('video, audio')) quiet(media, selector);
     };
-    // Media events don't bubble, so this listens on the way down.
+    // Media events don't bubble, so this listens on the way down. While the pause cover is up,
+    // nothing plays behind it, like the next video starting by itself.
     ctx.addEventListener(
       document,
       'play',
       (event) => {
-        if (event.target instanceof HTMLMediaElement) quiet(event.target);
+        if (!(event.target instanceof HTMLMediaElement)) return;
+        if (removeOverlay) event.target.pause();
+        else quiet(event.target);
       },
       { capture: true },
     );

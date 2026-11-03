@@ -68,6 +68,15 @@ describe('buildRecipeCss', () => {
     expect(css).not.toContain('grayscale');
   });
 
+  it('gives each selector a rule of its own, so one the browser rejects drops only itself', () => {
+    const css = buildRecipeCss(recipe, { hideFeed: true }, [{ selector: 'div:has(> .clip)', label: 'Clip' }]);
+    expect(css.split('\n\n')).toEqual([
+      '#feed {\n  display: none !important;\n}',
+      '.trending {\n  display: none !important;\n}',
+      'div:has(> .clip) {\n  display: none !important;\n}',
+    ]);
+  });
+
   it('adds grayscale when its toggle is on', () => {
     expect(buildRecipeCss(recipe, { grayscale: true })).toContain('filter: grayscale(1)');
   });

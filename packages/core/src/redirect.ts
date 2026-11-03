@@ -49,8 +49,9 @@ export interface RedirectRule {
   /** Send the visit to the Seiza page, or let it load even though a broader rule redirects it. */
   action: 'redirect' | 'allow';
   /**
-   * Higher wins. Every other site is 1, whole sites 2, and page rules rank above them, longer
-   * paths first.
+   * Higher wins. Every other site is 1. Sites rank above it, a site added by its address above any
+   * shorter one it sits inside, and each site's page rules rank just above the site, longer paths
+   * first.
    */
   priority: number;
 }
@@ -96,21 +97,32 @@ export function redirectRules(options: {
       })
     : [];
 
-  const sites = [...recipes, ...passed].flatMap((recipe) => {
+  const known = [...recipes, ...passed];
+  const domains = known.flatMap((recipe) => ownSiteDomain(recipe.id) ?? []);
+  // A site inside another ("mail.example.com" in "example.com") always gets a rule of its own, so
+  // the wider site's rules never reach it.
+  const inside = (recipe: SiteRecipe) => {
+    const domain = ownSiteDomain(recipe.id);
+    return !!domain && domains.some((other) => domain.endsWith(`.${other}`));
+  };
+
+  const sites = known.flatMap((recipe) => {
     const rule = findRule(profile, recipe.id);
+    const nested = inside(recipe);
     // An unlisted site that's closed is already covered by the rule for every other site.
-    if (!rule && (!othersClosed || accessFor(others, session, recipe.id, now) !== 'open')) return [];
+    if (!rule && !nested && (!othersClosed || accessFor(others, session, recipe.id, now) !== 'open')) return [];
     const closed = (level: SiteLevel) => accessFor(level, session, recipe.id, now) !== 'open';
     const pages = (rule?.paths ?? []).map((page) => ({ path: page.path, closed: closed(page.level) }));
     const siteClosed = closed(rule?.level ?? others);
-    if (!siteClosed && !othersClosed && !pages.some((page) => page.closed)) return [];
+    if (!siteClosed && !othersClosed && !nested && !pages.some((page) => page.closed)) return [];
 
     const regexes = (pathSource?: string) =>
       recipe.matches.flatMap((pattern) => matchPatternToRegex(pattern, pathSource) ?? []);
-    // An open site only needs a rule of its own when every other site is closed.
+    const priority = sitePriority(recipe);
+    // Otherwise an open site only needs a rule of its own when every other site is closed.
     const site: RedirectRule[] =
-      siteClosed || othersClosed
-        ? regexes().map((regexFilter) => ({ regexFilter, action: siteClosed ? 'redirect' : 'allow', priority: 2 }))
+      siteClosed || othersClosed || nested
+        ? regexes().map((regexFilter) => ({ regexFilter, action: siteClosed ? 'redirect' : 'allow', priority }))
         : [];
     return [
       ...site,
@@ -118,7 +130,7 @@ export function redirectRules(options: {
         regexes(`${pathRegexSource(page.path)}([?#].*)?`).map((regexFilter): RedirectRule => ({
           regexFilter,
           action: page.closed ? 'redirect' : 'allow',
-          priority: 3 + page.path.length,
+          priority: priority + 1 + page.path.length,
         })),
       ),
     ];
@@ -130,6 +142,17 @@ export function redirectRules(options: {
     { regexFilter: localAddresses, action: 'allow', priority: 1 },
     ...sites,
   ];
+}
+
+/**
+ * Where a site's rules rank. Sites someone added are found longest address first (`siteRecipes`),
+ * so "mail.example.com" is a site of its own inside "example.com", and its rules beat the wider
+ * site's, page rules included. Built-in sites never overlap each other or an added one: adding an
+ * address on a built-in site gives the built-in site. Page paths are at most 200 characters, so a
+ * site's page rules stay below the next longer address.
+ */
+function sitePriority(recipe: SiteRecipe): number {
+  return 2 + (ownSiteDomain(recipe.id)?.length ?? 0) * 1000;
 }
 
 /** Gives the session a pass to one site, dropping any passes that have already run out. */
