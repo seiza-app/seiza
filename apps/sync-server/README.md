@@ -68,11 +68,11 @@ is `seiza-sync health`.
 
 ### Your first group
 
-**Start your own group straight away.** By default the server accepts exactly one group, the first
-device's, and then closes to new ones, so it's yours from the moment your first computer joins.
-If that group is ever gone (its last computer chose **Leave sync…**, or **Move…** to another
-server), the server has no groups again, so it's open until the next computer starts one. To keep
-it closed then, stop the server, or set `SEIZA_SYNC_NEW_GROUPS: invites`.
+**Start your own group straight away.** By default the server takes exactly one group without
+asking, the first device's, and then closes to new ones for good, so it's yours from the moment
+your first computer joins. It stays closed even if that group is gone (its last computer chose
+**Leave sync…**, or **Move…** to another server). To start a group there again, make an invite
+code (below) and type it in the **Invite code** field Settings › Sync shows.
 
 ### Sharing it with friends
 
@@ -169,7 +169,7 @@ All from the environment:
 |---|---|---|
 | `SEIZA_SYNC_ADDR` | `0.0.0.0:8080` | Where it listens. |
 | `SEIZA_SYNC_DB` | `seiza-sync.db` (`/data/seiza-sync.db` in Docker) | The database file. |
-| `SEIZA_SYNC_NEW_GROUPS` | `first-group-only` | Who can start a sync group: `first-group-only` (only while the server has none), `invites` (each needs a code from `seiza-sync invite`), or `open` (anyone). |
+| `SEIZA_SYNC_NEW_GROUPS` | `first-group-only` | Who can start a sync group: `first-group-only` (the first group, then each needs a code from `seiza-sync invite`), `invites` (each needs a code from `seiza-sync invite`), or `open` (anyone). |
 | `SEIZA_SYNC_GROUP_MAX_MB` | `50` | The most each group can store. |
 | `SEIZA_SYNC_CLIENT_IP_HEADER` | none | A header from a proxy in front with the visitor's address, e.g. `CF-Connecting-IP`. Only set it when every request comes through that proxy, since anyone could send the header otherwise. |
 
@@ -180,7 +180,7 @@ In Docker, run them with `docker compose exec seiza-sync seiza-sync <command>`.
 - `seiza-sync stats`: counts groups, devices, groups active in the last 7 and 30 days, and what's
   stored. These come from what the server keeps anyway; the app sends nothing extra.
 - `seiza-sync invite`: a one-time code for one new group, valid for 7 days (for
-  `SEIZA_SYNC_NEW_GROUPS=invites`).
+  `SEIZA_SYNC_NEW_GROUPS=invites`, or a new group on a `first-group-only` server after its first).
 - `seiza-sync backup <file>`: copies the database to a new file, safely while it runs.
 - `seiza-sync health`: checks that the server here answers.
 

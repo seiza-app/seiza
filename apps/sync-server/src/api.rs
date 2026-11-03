@@ -244,7 +244,6 @@ async fn create_group(
         .await?;
     match outcome {
         CreateGroup::Created(device) => Ok(Json(device.into())),
-        CreateGroup::Closed => Err(ApiError::Forbidden("this server isn't taking new sync groups")),
         CreateGroup::BadInvite => Err(ApiError::Forbidden("a new sync group here needs a valid invite code")),
     }
 }
@@ -827,14 +826,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_first_group_closes_the_server_by_default() {
+    async fn after_the_first_group_new_ones_need_an_invite_by_default() {
         let server = Server::new(NewGroups::FirstOnly);
         server.first_device().await;
         let (status, body) = server
             .send(Call::new(Method::POST, "/v1/groups").json(json!({ "label": label("someone") })))
             .await;
         assert_eq!(status, StatusCode::FORBIDDEN);
-        assert_eq!(body["error"], "this server isn't taking new sync groups");
+        // The app asks for an invite code when it reads this.
+        assert_eq!(body["error"], "a new sync group here needs a valid invite code");
     }
 
     #[tokio::test]
@@ -1058,11 +1058,16 @@ mod tests {
                 .0,
             StatusCode::UNAUTHORIZED
         );
-        // Then the desktop leaves, and with no devices left the server takes a first group again.
+        // Then the desktop leaves, and with no devices left the group goes.
         server
             .send(Call::new(Method::DELETE, &format!("/v1/devices/{desktop_id}")).token(&desktop))
             .await;
-        server.first_device().await;
+        let groups = server
+            .app
+            .db(|db| db.query_row("SELECT COUNT(*) FROM groups", [], |row| row.get::<_, i64>(0)))
+            .await
+            .unwrap();
+        assert_eq!(groups, 0);
     }
 
     #[tokio::test]
