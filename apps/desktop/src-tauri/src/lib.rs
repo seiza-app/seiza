@@ -360,7 +360,7 @@ fn act_on_browser(app: &AppHandle, action: Action) {
 
 /// The running session's check for idle time.
 #[derive(Default)]
-struct IdleTask(Mutex<Option<JoinHandle<()>>>);
+struct IdleTask(Mutex<Option<(String, u32, JoinHandle<()>)>>);
 
 /// Checks once a minute while a session runs, and ends it after `idle_minutes` without
 /// keyboard or mouse input. Nothing runs between sessions, or where the system can't say how
@@ -369,7 +369,15 @@ struct IdleTask(Mutex<Option<JoinHandle<()>>>);
 fn watch_idle(app: &AppHandle, session_id: Option<String>, idle_minutes: u32) {
     let task = app.state::<IdleTask>();
     let mut task = task.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(previous) = task.take() {
+    // Like the session's watch, it keeps going through changes that leave the session and the
+    // limit as they were. Starting over would miss time asleep, and put its next check off.
+    if task
+        .as_ref()
+        .is_some_and(|(id, minutes, _)| Some(id) == session_id.as_ref() && *minutes == idle_minutes)
+    {
+        return;
+    }
+    if let Some((_, _, previous)) = task.take() {
         previous.abort();
     }
 
@@ -380,7 +388,8 @@ fn watch_idle(app: &AppHandle, session_id: Option<String>, idle_minutes: u32) {
     let limit = i64::from(idle_minutes) * 60_000;
 
     let app = app.clone();
-    *task = Some(tauri::async_runtime::spawn(async move {
+    let id = session_id.clone();
+    let handle = tauri::async_runtime::spawn(async move {
         let Some(idle_ms) = idle_reading().await else { return };
         let mut watch = IdleWatch::new(now_ms(), idle_ms);
         let mut elsewhere = i64::MIN;
@@ -401,7 +410,8 @@ fn watch_idle(app: &AppHandle, session_id: Option<String>, idle_minutes: u32) {
                 return;
             }
         }
-    }));
+    });
+    *task = Some((id, idle_minutes, handle));
 }
 
 /// Reads the system's idle time on a thread that's allowed to wait, since on Linux it waits on

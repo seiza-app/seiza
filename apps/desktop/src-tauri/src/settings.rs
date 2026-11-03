@@ -15,9 +15,8 @@ pub struct Settings {
     /// isn't counted. 0 turns this off, as it is for new installs: stepping away for a drink
     /// shouldn't end a session. Installs from before then keep 15 (store.rs).
     pub idle_minutes: u32,
-    /// Whether a Medium or Hard session closes a browser that runs without the extension
-    /// (and Hard counts the session as broken). Off, it only warns. Opt-in, so the app and
-    /// the extension can each be used on their own.
+    /// Whether a Medium or Hard session closes a browser that runs without the extension.
+    /// Off, it only warns. Opt-in, so the app and the extension can each be used on their own.
     pub close_browsers: bool,
     /// Whether the sky in the window animates at 30 frames a second instead of 60, to save
     /// battery. It pauses whenever the window isn't focused either way.
