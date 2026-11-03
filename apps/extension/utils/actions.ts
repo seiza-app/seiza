@@ -96,6 +96,8 @@ function editSites(profileId: string, edit: (list: Profile[]) => Profile[]): Pro
 
 export async function startSession(profileId: string): Promise<void> {
   await inTurn(async () => {
+    // A second tap, or a start from another window, mustn't replace the session already running.
+    if (await activeSession.getValue()) return;
     const rules = (await profiles.getValue()).find((p) => p.id === profileId);
     await activeSession.setValue({ id: crypto.randomUUID(), profileId, startedAt: Date.now(), rules });
   });
@@ -162,16 +164,21 @@ export async function duplicateProfile(profileId: string): Promise<string> {
 }
 
 /** Deletes a profile, unless it's the one the running session uses. */
-export async function deleteProfile(profileId: string): Promise<void> {
-  if ((await activeSession.getValue())?.profileId === profileId) return;
-  await editProfiles((list) => withProfileRemoved(list, profileId));
+export function deleteProfile(profileId: string): Promise<void> {
+  return inTurn(async () => {
+    const [session, list] = await Promise.all([activeSession.getValue(), profiles.getValue()]);
+    if (session?.profileId === profileId) return;
+    await saveEdit((from) => withProfileRemoved(from, profileId), list, session);
+  });
 }
 
 /** Deletes several profiles at once, skipping the one the running session uses. At least one is always kept. */
-export async function deleteProfiles(profileIds: string[]): Promise<void> {
-  const running = (await activeSession.getValue())?.profileId;
-  const ids = profileIds.filter((id) => id !== running);
-  await editProfiles((list) => withProfilesRemoved(list, ids));
+export function deleteProfiles(profileIds: string[]): Promise<void> {
+  return inTurn(async () => {
+    const [session, list] = await Promise.all([activeSession.getValue(), profiles.getValue()]);
+    const ids = profileIds.filter((id) => id !== session?.profileId);
+    await saveEdit((from) => withProfilesRemoved(from, ids), list, session);
+  });
 }
 
 export async function renameProfile(profileId: string, name: string): Promise<void> {
