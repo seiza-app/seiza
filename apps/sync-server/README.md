@@ -44,6 +44,15 @@ So it can see who's in which group, how much they store and when they sync, and 
 Pairing a new device happens through it too, but the code's words are never sent to it (only the
 number at the front, which picks the pairing).
 
+While a device syncs, it keeps one connection open (`GET /v1/live`), and the server tells it when
+another device in its group sends something, so a session started on one computer starts on the
+others within seconds. The same connection passes short encrypted messages between a group's
+devices (asking whether anyone's been at their computer, before an idle session ends), which the
+server never keeps. It's plain HTTP (server-sent events) with a comment every 40 seconds, so it
+passes through a Cloudflare Tunnel and most reverse proxies as it is. Behind nginx, it sends
+`X-Accel-Buffering: no` so nginx doesn't hold events back. A server from before this still syncs,
+just at the moments the app already syncs (when its window opens, when a session starts or ends).
+
 ## Running it with Docker
 
 CI publishes the image to GitHub's registry as `ghcr.io/seiza-app/seiza-sync`, for both
@@ -195,7 +204,10 @@ To restore, stop the server and put the backup in place of `/data/seiza-sync.db`
   (the pairing ended, expired or was replaced first) is taken out of the group again.
 - Rate limits per address, each minute: 300 requests, 10 attempts to join a pairing, and 3 new
   groups.
-- Size caps: 1 MB per batch, 4 KB per pairing message, and the group cap above.
+- Size caps: 1 MB per batch, 4 KB per pairing or live message, and the group cap above.
+- Live connections: one per device (a new one ends its older one), 16 per group and 5,000 in all.
+  Each checks every five minutes that its device is still in the group, and ends at once if it's
+  removed.
 
 ## The API
 
@@ -209,6 +221,8 @@ which are the raw request body. Devices send `Authorization: Bearer <token>`.
 | `DELETE /devices/{id}` | a device | Removes a device (Remove, or Leave sync for itself). The group goes once its last device does. |
 | `POST /batches` (raw body) | a device | Adds a batch. Returns `{seq}`. |
 | `GET /batches?after=N` | a device | Batches after `N`, in order: `{batches: [{seq, deviceId, data, createdAt}], more}`. |
+| `GET /live` | a device | Its live connection, as server-sent events: `ready`, `batch` `{seq}` (or `{}` if it may have missed some) when another device uploads one, and `message` `{deviceId, data}`. |
+| `POST /live` (raw body) | a device | Passes a message to the group's other connected devices. Not kept. |
 | `POST /pairings` | a device | Opens a pairing: `{slot, expiresAt}`. A group has one open at a time. |
 | `POST /pairings/{slot}/join` | the new device | Joins it: `{joinerKey, expiresAt}`. The joiner key is its token for the rest of the pairing. |
 | `POST /pairings/{slot}/messages` (raw body) | either side | Sends the other side a message. |

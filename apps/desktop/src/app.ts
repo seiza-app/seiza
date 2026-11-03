@@ -210,6 +210,8 @@ export const answerSyncDevice = (add: boolean) => invoke<void>('sync_answer_devi
 export const stopPairing = () => invoke<void>('sync_stop_pairing');
 export const syncDevices = () => invoke<SyncDevice[]>('sync_devices');
 export const removeSyncDevice = (deviceId: string) => invoke<void>('sync_remove_device', { deviceId });
+/** Start sessions from my other computers here, on or off. */
+export const setSyncFollow = (on: boolean) => invoke<void>('sync_set_follow', { on });
 /** Leaves sync. Resolves to whether the server heard. */
 export const leaveSync = () => invoke<boolean>('sync_leave');
 export const moveSyncServer = (address: string, invite?: string) =>

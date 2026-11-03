@@ -25,4 +25,9 @@ problem: string | null,
  * Whether this computer has sessions of its own, whose rare events and comets are drawn
  * again when it joins a group and takes the group's sky.
  */
-ownSessions: boolean, };
+ownSessions: boolean, 
+/**
+ * Start sessions from my other computers here: whether this computer takes part in the
+ * group's sessions, or only syncs stats.
+ */
+follow: boolean, };

@@ -8,8 +8,10 @@ license = "AGPL-3.0-only"
 repository = "https://github.com/seiza-app/seiza"
 
 [dependencies]
-# The HTTP server. Only the parts used here; WebSockets come with live sessions (PLAN §8, Sync).
+# The HTTP server. Only the parts used here.
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
+# Live sessions' stream of events (live.rs). Already inside axum, so it adds no new crates.
+futures-util = { version = "0.3", default-features = false }
 tokio = { version = "1", features = ["rt", "macros", "net", "signal", "sync", "time"] }
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }

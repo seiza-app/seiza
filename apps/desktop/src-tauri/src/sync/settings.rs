@@ -8,8 +8,9 @@ use reqwest::Url;
 use serde::{Deserialize, Serialize};
 
 use super::crypto::GroupKey;
+use crate::session::Session;
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncSettings {
     /// The server's address, as `server_address` left it.
@@ -29,7 +30,31 @@ pub struct SyncSettings {
     /// When this device last sent or fetched (epoch ms).
     pub last_synced_at: Option<i64>,
     /// Start sessions from my other computers here (live sessions, step 8). On when it joins.
+    /// Off, this computer neither takes the group's sessions nor shares its own.
     pub follow: bool,
+    /// The group's running session, or the one that last ended, as this computer last sent it or
+    /// heard of it (exchange.rs).
+    #[serde(default)]
+    pub live: Option<GroupSession>,
+}
+
+/// Which session is running in the sync group, as a batch says (`"live"`): one, with its rules
+/// and goal, or none since the one that ended.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupSession {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub running: Option<RunningSession>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunningSession {
+    pub session: Session,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
 }
 
 impl SyncSettings {
@@ -47,6 +72,7 @@ impl SyncSettings {
             fetched: 0,
             last_synced_at: None,
             follow: true,
+            live: None,
         }
     }
 

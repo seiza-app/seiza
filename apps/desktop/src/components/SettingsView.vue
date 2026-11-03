@@ -245,7 +245,8 @@ const glowHelp = computed(() => {
         </div>
         <p class="help">
           For if you tend to forget to end sessions. With no keyboard or mouse input for a while, a session ends by
-          itself, and the time away isn't counted.
+          itself, and the time away isn't counted. A session running on several computers (Sync) only ends once you've
+          been away from all of them.
         </p>
       </div>
     </section>

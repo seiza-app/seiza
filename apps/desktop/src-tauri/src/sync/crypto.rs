@@ -23,6 +23,8 @@ pub enum Purpose {
     /// A device's name, as the server's device list shows it. Sealed before the group has an
     /// id (the first device names itself as it starts the group), so it's bound to no group.
     Label,
+    /// A message between the group's connected devices (sync/live.rs).
+    Live,
 }
 
 impl Purpose {
@@ -30,6 +32,7 @@ impl Purpose {
         match self {
             Purpose::Batch => b"seiza batch v1",
             Purpose::Label => b"seiza label v1",
+            Purpose::Live => b"seiza live v1",
         }
     }
 }

@@ -1,8 +1,14 @@
 // Sending this computer's changes to the sync server and fetching the others' (PLAN §8, Sync,
-// build step 5). There are no timers: a send goes out after something changes here (a session
-// ends, a goal is answered, a constellation or profile changes), and a fetch when the window
-// opens and when a session starts or ends. Changes go as records.rs's records, in batches of
+// build steps 5 and 8). There are no timers: a send goes out after something changes here (a
+// session starts or ends, a goal is answered, a constellation or profile changes), and a fetch
+// when the window opens, when a session starts or ends, and when the server's live connection
+// says something new has arrived (live.rs). Changes go as records.rs's records, in batches of
 // `{"v": 1, "records": [...]}` compressed with zlib and sealed by the group's key.
+//
+// A batch can also say which session is running in the group, as `"live"`, so a session started
+// on one computer starts on the others that follow (Settings › Sync), and ending it on one ends
+// it everywhere. The computer that ends it logs it; the others only stop it. Older versions of
+// the app leave `"live"` out, as they would any field they don't know.
 //
 // One exchange runs at a time. Asking for one while it runs has it go again once it's done, and
 // each waits a moment first, so changes made together go out together.
@@ -21,7 +27,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use super::client::{Client, ClientError};
 use super::crypto::{GroupKey, Purpose};
-use super::settings::SyncSettings;
+use super::settings::{GroupSession, RunningSession, SyncSettings};
 use super::setup::{emit_status, signed_in};
 use crate::error::Error;
 use crate::records::Record;
@@ -133,7 +139,10 @@ async fn exchange(app: &AppHandle, fetch: bool) {
         Err(error) => return eprintln!("Seiza: couldn't read the sync settings: {error}"),
     };
     let problem = match run(app, &settings, fetch).await {
-        Ok(()) => None,
+        Ok(()) => {
+            super::live::watch(app);
+            None
+        }
         Err(Stop::Passing) => return,
         // Sync is off here now, and Settings › Sync says why.
         Err(Stop::Problem(Error::RemovedFromSync)) => None,
@@ -204,13 +213,17 @@ async fn fetch_batches(app: &AppHandle, client: &Client, settings: &mut SyncSett
         let page = client.batches_after(&settings.token, settings.fetched).await;
         let page = answered(app, settings, page)?;
         let mut records = Vec::new();
+        let mut lives = Vec::new();
         let mut reached = settings.fetched;
         for batch in &page.batches {
             // This computer's own, sent back. Ones it sent under an earlier id (before it left and
             // joined again) are saved like any other's, and change nothing.
             if batch.device_id != settings.device_id {
                 match open(key, &settings.group_id, &batch.data) {
-                    Opened::Records(opened) => records.extend(opened),
+                    Opened::Records(opened, live) => {
+                        records.extend(opened);
+                        lives.extend(live.map(|live| *live));
+                    }
                     Opened::Newer => {
                         newer = true;
                         break;
@@ -220,15 +233,30 @@ async fn fetch_batches(app: &AppHandle, client: &Client, settings: &mut SyncSett
             reached = batch.seq;
         }
         let now = crate::now_ms();
-        let applied = crate::engine(app).apply_records(&records, now)?;
+        let (applied, live, taken) = {
+            let mut engine = crate::engine(app);
+            // The log first, so a session that's already ended there isn't joined.
+            let applied = engine.apply_records(&records, now)?;
+            let (live, taken) = if settings.follow {
+                take_lives(&mut engine, lives, now)?
+            } else {
+                (None, false)
+            };
+            (applied, live, taken)
+        };
         // Told a page at a time, so what's saved shows even if a later page doesn't come.
-        if applied > 0 {
+        if applied > 0 || taken {
             crate::changed(app);
+        }
+        if applied > 0 {
             let _ = app.emit("synced", ());
         }
         advance(app, settings, |s| {
             s.fetched = reached;
             s.last_synced_at = Some(now);
+            if live.is_some() {
+                s.live = live;
+            }
         })?;
         emit_status(app);
         if newer || !page.more || page.batches.is_empty() {
@@ -237,22 +265,84 @@ async fn fetch_batches(app: &AppHandle, client: &Client, settings: &mut SyncSett
     }
 }
 
-/// Sends everything that's changed here since the last send.
+/// Brings the sessions other computers said are running or ended into this one, in the order
+/// they were sent. Returns the last one, as the group's, and whether anything changed here.
+fn take_lives(
+    engine: &mut crate::engine::Engine,
+    lives: Vec<GroupSession>,
+    now: i64,
+) -> std::result::Result<(Option<GroupSession>, bool), Error> {
+    let mut changed = false;
+    let mut last = None;
+    for mut live in lives {
+        changed |= match &mut live {
+            GroupSession {
+                running: Some(running), ..
+            } => {
+                running.session.rest.clear();
+                engine.take_group_session(running.session.clone(), running.goal.clone(), now)?
+            }
+            GroupSession { ended: Some(id), .. } => engine.end_group_session(id, now)?,
+            _ => false,
+        };
+        last = Some(live);
+    }
+    Ok((last, changed))
+}
+
+/// The session running here, to tell the group, or the one that ended here: once it's no longer
+/// running, the last one the group heard of. None while it's on a computer that doesn't follow
+/// the group's sessions, or there's nothing to say.
+fn live_here(engine: &crate::engine::Engine, settings: &SyncSettings) -> Option<GroupSession> {
+    if !settings.follow {
+        return None;
+    }
+    match engine.session() {
+        Some(session) => {
+            let mut session = session.clone();
+            // The browsers' own changes to it (site passes, say) stay on this computer.
+            session.rest.clear();
+            let goal = engine.session_goal().map(str::to_owned);
+            Some(GroupSession {
+                running: Some(RunningSession { session, goal }),
+                ended: None,
+            })
+        }
+        None => {
+            let running = settings.live.as_ref()?.running.as_ref()?;
+            Some(GroupSession {
+                running: None,
+                ended: Some(running.session.id.clone()),
+            })
+        }
+    }
+}
+
+/// Sends everything that's changed here since the last send, and the session running here if
+/// the group hasn't heard of it.
 async fn send_changes(app: &AppHandle, client: &Client, settings: &mut SyncSettings, key: &GroupKey) -> Result<()> {
     loop {
-        let (records, next) = crate::engine(app).changed_records(settings.sent, PAGE)?;
-        let sent_any = !records.is_empty();
-        for batch in batches(&records)? {
+        let (records, next, live) = {
+            let engine = crate::engine(app);
+            let (records, next) = engine.changed_records(settings.sent, PAGE)?;
+            let live = live_here(&engine, settings).filter(|live| settings.live.as_ref() != Some(live));
+            (records, next, live)
+        };
+        let sent_any = !records.is_empty() || live.is_some();
+        for batch in batches(&records, live.as_ref())? {
             let sealed = key.seal(Purpose::Batch, &settings.group_id, &batch);
             let uploaded = client.upload_batch(&settings.token, sealed).await;
             answered(app, settings, uploaded)?;
         }
-        if next != settings.sent {
+        if next != settings.sent || live.is_some() {
             let now = crate::now_ms();
             advance(app, settings, |s| {
                 s.sent = next;
                 if sent_any {
                     s.last_synced_at = Some(now);
+                }
+                if live.is_some() {
+                    s.live = live;
                 }
             })?;
             if sent_any {
@@ -269,6 +359,8 @@ async fn send_changes(app: &AppHandle, client: &Client, settings: &mut SyncSetti
 struct Outgoing<'a> {
     v: u32,
     records: &'a [Record],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    live: Option<&'a GroupSession>,
 }
 
 #[derive(Deserialize)]
@@ -276,25 +368,36 @@ struct Incoming {
     v: u32,
     #[serde(default)]
     records: Vec<serde_json::Value>,
+    #[serde(default)]
+    live: Option<serde_json::Value>,
 }
 
-/// Records as batches to seal, each small enough for the server. A single record too big for
-/// one on its own (it would take a profile with tens of thousands of sites) isn't sent.
-fn batches(records: &[Record]) -> std::result::Result<Vec<Vec<u8>>, Error> {
-    if records.is_empty() {
+/// Records as batches to seal, each small enough for the server, with the group's session in
+/// the last, after the records it may need (an ended session's log, say). A single record too
+/// big for one on its own (it would take a profile with tens of thousands of sites) isn't sent.
+fn batches(records: &[Record], live: Option<&GroupSession>) -> std::result::Result<Vec<Vec<u8>>, Error> {
+    if records.is_empty() && live.is_none() {
         return Ok(Vec::new());
     }
-    let packed = compress(&serde_json::to_vec(&Outgoing { v: VERSION, records })?);
+    let packed = compress(&serde_json::to_vec(&Outgoing {
+        v: VERSION,
+        records,
+        live,
+    })?);
     if packed.len() + SEALING_BYTES <= MAX_BATCH_BYTES {
         return Ok(vec![packed]);
     }
-    if records.len() == 1 {
+    if records.len() <= 1 {
         eprintln!("Seiza: a record is too big to sync, so it stays on this computer");
-        return Ok(Vec::new());
+        // The session still goes, without it.
+        return match live {
+            Some(_) if !records.is_empty() => batches(&[], live),
+            _ => Ok(Vec::new()),
+        };
     }
     let (first, rest) = records.split_at(records.len() / 2);
-    let mut halves = batches(first)?;
-    halves.extend(batches(rest)?);
+    let mut halves = batches(first, None)?;
+    halves.extend(batches(rest, live)?);
     Ok(halves)
 }
 
@@ -320,26 +423,28 @@ fn decompress(packed: &[u8]) -> Option<Vec<u8>> {
 
 #[derive(Debug, PartialEq)]
 enum Opened {
-    Records(Vec<Record>),
+    /// Its records, and the group's session if it said.
+    Records(Vec<Record>, Option<Box<GroupSession>>),
     /// From a newer version of Seiza: it waits on the server until this one is updated.
     Newer,
 }
 
 /// What a batch from another computer holds. One that won't open (not sealed by this group's
-/// key, or changed on the way) holds nothing, as does a record this version doesn't know.
+/// key, or changed on the way) holds nothing, as does a record this version doesn't know, or a
+/// group's session it can't read.
 fn open(key: &GroupKey, group_id: &str, sealed: &[u8]) -> Opened {
     let Ok(plain) = key.open(Purpose::Batch, group_id, sealed) else {
-        return Opened::Records(Vec::new());
+        return Opened::Records(Vec::new(), None);
     };
     // The first byte says how it's packed: plain JSON (batches from before compression) or
     // zlib. Anything else is a packing from a newer version, so it waits for an update rather
     // than being skipped.
     let json = match plain.first() {
-        None => return Opened::Records(Vec::new()),
+        None => return Opened::Records(Vec::new(), None),
         Some(b'{') => Cow::Borrowed(&plain[..]),
         Some(&ZLIB) => match decompress(&plain) {
             Some(json) => Cow::Owned(json),
-            None => return Opened::Records(Vec::new()),
+            None => return Opened::Records(Vec::new(), None),
         },
         Some(_) => return Opened::Newer,
     };
@@ -351,15 +456,22 @@ fn open(key: &GroupKey, group_id: &str, sealed: &[u8]) -> Opened {
                 .into_iter()
                 .filter_map(|record| serde_json::from_value(record).ok())
                 .collect(),
+            batch
+                .live
+                .and_then(|live| serde_json::from_value(live).ok())
+                .map(Box::new),
         ),
-        Err(_) => Opened::Records(Vec::new()),
+        Err(_) => Opened::Records(Vec::new(), None),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::Engine;
     use crate::records::SyncedName;
+    use crate::session::EndReason;
+    use crate::store::Store;
 
     fn name(id: &str, name: &str) -> Record {
         Record::ConstellationName(SyncedName {
@@ -373,18 +485,18 @@ mod tests {
     fn batches_open_on_the_group_s_other_computers() {
         let key = GroupKey::generate();
         let records = vec![name("a", "Orion"), name("b", "Lyra")];
-        let sealed: Vec<_> = batches(&records)
+        let sealed: Vec<_> = batches(&records, None)
             .unwrap()
             .iter()
             .map(|batch| key.seal(Purpose::Batch, "group", batch))
             .collect();
         assert_eq!(sealed.len(), 1);
-        assert_eq!(open(&key, "group", &sealed[0]), Opened::Records(records));
+        assert_eq!(open(&key, "group", &sealed[0]), Opened::Records(records, None));
         // Another group's, or another key's, hold nothing.
-        assert_eq!(open(&key, "other", &sealed[0]), Opened::Records(vec![]));
+        assert_eq!(open(&key, "other", &sealed[0]), Opened::Records(vec![], None));
         assert_eq!(
             open(&GroupKey::generate(), "group", &sealed[0]),
-            Opened::Records(vec![])
+            Opened::Records(vec![], None)
         );
     }
 
@@ -397,14 +509,14 @@ mod tests {
             {"kind":"constellationName","id":"a","name":"Orion","updatedAt":1}]}"#;
         assert_eq!(
             open(&key, "group", &sealed(mixed)),
-            Opened::Records(vec![name("a", "Orion")])
+            Opened::Records(vec![name("a", "Orion")], None)
         );
         // A newer format waits for an update.
         assert_eq!(open(&key, "group", &sealed(r#"{"v":2,"stuff":[]}"#)), Opened::Newer);
-        assert_eq!(open(&key, "group", &sealed("{not json")), Opened::Records(vec![]));
+        assert_eq!(open(&key, "group", &sealed("{not json")), Opened::Records(vec![], None));
         // So does a packing it doesn't know, and a damaged zlib one is skipped.
         assert_eq!(open(&key, "group", &sealed("\u{1}new")), Opened::Newer);
-        assert_eq!(open(&key, "group", &sealed("x damaged")), Opened::Records(vec![]));
+        assert_eq!(open(&key, "group", &sealed("x damaged")), Opened::Records(vec![], None));
     }
 
     /// Text that hardly compresses.
@@ -423,35 +535,132 @@ mod tests {
         let json = serde_json::to_vec(&Outgoing {
             v: VERSION,
             records: &records,
+            live: None,
         })
         .unwrap();
-        let packed = batches(&records).unwrap();
+        let packed = batches(&records, None).unwrap();
         assert_eq!(packed[0][0], ZLIB);
         assert!(packed[0].len() * 4 < json.len());
 
         let key = GroupKey::generate();
         let plain = key.seal(Purpose::Batch, "group", &json);
-        assert_eq!(open(&key, "group", &plain), Opened::Records(records));
+        assert_eq!(open(&key, "group", &plain), Opened::Records(records, None));
+    }
+
+    fn settings() -> SyncSettings {
+        SyncSettings::new(
+            "https://sync.example.com".into(),
+            crate::sync::client::Membership {
+                group_id: "g".into(),
+                device_id: "d".into(),
+                token: "t".into(),
+            },
+            &GroupKey::generate(),
+            "Mac".into(),
+        )
+    }
+
+    fn engine() -> Engine {
+        Engine::load(Store::open_in_memory().unwrap(), 0).unwrap()
+    }
+
+    #[test]
+    fn the_session_running_here_goes_to_the_group_and_its_end_after_it() {
+        let mut engine = engine();
+        let mut settings = settings();
+        assert_eq!(live_here(&engine, &settings), None);
+
+        engine.start_session("writing", 1).unwrap();
+        engine.set_session_goal("Draft the intro", 1).unwrap();
+        let running = live_here(&engine, &settings).unwrap();
+        let sent = running.running.as_ref().unwrap();
+        assert_eq!(sent.goal.as_deref(), Some("Draft the intro"));
+        assert!(sent.session.rest.is_empty());
+        settings.live = Some(running.clone());
+
+        engine.end_session(2, EndReason::Stopped).unwrap();
+        let ended = live_here(&engine, &settings).unwrap();
+        assert_eq!(ended.ended, Some(sent.session.id.clone()));
+        // Once the group's heard, there's nothing more to say.
+        settings.live = Some(ended);
+        assert_eq!(live_here(&engine, &settings), None);
+
+        // A computer that doesn't follow the group's sessions keeps its own to itself.
+        settings.follow = false;
+        engine.start_session("writing", 3).unwrap();
+        assert_eq!(live_here(&engine, &settings), None);
+    }
+
+    #[test]
+    fn sessions_from_the_group_are_taken_in_order() {
+        let mut there = engine();
+        let mut here = engine();
+        there.start_session("writing", 1).unwrap();
+        let first = live_here(&there, &settings()).unwrap();
+        let id = first.running.as_ref().unwrap().session.id.clone();
+        let ended = GroupSession {
+            running: None,
+            ended: Some(id.clone()),
+        };
+        let (last, changed) = take_lives(&mut here, vec![first.clone()], 2).unwrap();
+        assert!(changed);
+        assert_eq!(last, Some(first.clone()));
+        assert_eq!(here.session().unwrap().id, id);
+        let (last, changed) = take_lives(&mut here, vec![first, ended.clone()], 3).unwrap();
+        assert!(changed);
+        assert_eq!(last, Some(ended));
+        assert!(here.session().is_none());
+    }
+
+    #[test]
+    fn the_group_s_session_travels_with_the_records() {
+        let key = GroupKey::generate();
+        let mut engine = engine();
+        engine.start_session("writing", 1).unwrap();
+        let live = live_here(&engine, &settings()).unwrap();
+        let records = vec![name("a", "Orion")];
+        let packed = batches(&records, Some(&live)).unwrap();
+        assert_eq!(
+            open(&key, "g", &key.seal(Purpose::Batch, "g", &packed[0])),
+            Opened::Records(records, Some(Box::new(live.clone())))
+        );
+        // On its own, and in the last of a split batch.
+        let alone = batches(&[], Some(&live)).unwrap();
+        assert_eq!(
+            open(&key, "g", &key.seal(Purpose::Batch, "g", &alone[0])),
+            Opened::Records(vec![], Some(Box::new(live.clone())))
+        );
+        let big: Vec<_> = (0..7).map(|i| name(&i.to_string(), &noise(600_000))).collect();
+        let split = batches(&big, Some(&live)).unwrap();
+        let lives: Vec<_> = split
+            .iter()
+            .map(|b| match open(&key, "g", &key.seal(Purpose::Batch, "g", b)) {
+                Opened::Records(_, live) => live,
+                Opened::Newer => unreachable!(),
+            })
+            .collect();
+        assert_eq!(lives.last().unwrap(), &Some(Box::new(live)));
+        assert!(lives[..lives.len() - 1].iter().all(Option::is_none));
     }
 
     #[test]
     fn big_changes_are_split_to_fit_the_server() {
         let records: Vec<_> = (0..7).map(|i| name(&i.to_string(), &noise(600_000))).collect();
-        let batches = batches(&records).unwrap();
+        let batches = batches(&records, None).unwrap();
         assert!(batches.len() > 1);
         assert!(batches.iter().all(|b| b.len() + SEALING_BYTES <= MAX_BATCH_BYTES));
         let key = GroupKey::generate();
         let back: Vec<_> = batches
             .iter()
             .flat_map(|b| match open(&key, "g", &key.seal(Purpose::Batch, "g", b)) {
-                Opened::Records(records) => records,
+                Opened::Records(records, _) => records,
                 Opened::Newer => unreachable!(),
             })
             .collect();
         assert_eq!(back, records);
         // One too big to send on its own stays here.
         assert!(
-            super::batches(&[name("big", &noise(3 * MAX_BATCH_BYTES))])
+            super::batches(&[name("big", &noise(3 * MAX_BATCH_BYTES))], None)
                 .unwrap()
                 .is_empty()
         );

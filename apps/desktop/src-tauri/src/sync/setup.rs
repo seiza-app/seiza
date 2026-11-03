@@ -1,6 +1,7 @@
 // Settings › Sync (PLAN §8, Sync): starting a sync group, joining one or adding a device with a
-// pairing code, the group's devices, leaving, and moving to another server. Sending and fetching
-// records is in exchange.rs.
+// pairing code, the group's devices, following the group's sessions, leaving, and moving to
+// another server. Sending and fetching records is in exchange.rs, and the live connection in
+// live.rs.
 //
 // A pairing runs in the background for up to its five minutes, asking the server for the other
 // computer's messages once a second. That's the only time sync asks over and over; it tells the
@@ -43,6 +44,9 @@ pub struct SyncStatus {
     /// Whether this computer has sessions of its own, whose rare events and comets are drawn
     /// again when it joins a group and takes the group's sky.
     pub own_sessions: bool,
+    /// Start sessions from my other computers here: whether this computer takes part in the
+    /// group's sessions, or only syncs stats.
+    pub follow: bool,
 }
 
 /// One of the group's devices, for the list in Settings › Sync.
@@ -127,9 +131,27 @@ pub fn status(app: &AppHandle) -> Result<SyncStatus> {
         server: settings.as_ref().map(|s| s.server.clone()),
         device_name: settings.as_ref().map_or_else(computer_name, |s| s.device_name.clone()),
         problem: settings.as_ref().and_then(|_| super::exchange::problem(app)),
+        follow: settings.as_ref().is_none_or(|s| s.follow),
         last_synced_at: settings.and_then(|s| s.last_synced_at),
         own_sessions,
     })
+}
+
+/// Turns Start sessions from my other computers here on or off. Turned on, it fetches, to join
+/// a session that's running elsewhere. A session already running here carries on either way.
+pub fn set_follow(app: &AppHandle, on: bool) -> Result<()> {
+    {
+        let engine = crate::engine(app);
+        let mut settings = engine.sync_settings()?.ok_or(Error::NotSyncing)?;
+        if settings.follow == on {
+            return Ok(());
+        }
+        settings.follow = on;
+        engine.set_sync_settings(Some(&settings), crate::now_ms())?;
+    }
+    emit_status(app);
+    super::exchange::fetch(app);
+    Ok(())
 }
 
 /// Tells Settings › Sync how sync is going.
@@ -141,6 +163,7 @@ pub(super) fn emit_status(app: &AppHandle) {
 
 fn sync_changed(app: &AppHandle) {
     emit_status(app);
+    super::live::watch(app);
     crate::changed(app);
 }
 

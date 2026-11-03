@@ -1,5 +1,6 @@
 // Seiza's sync server (PLAN §8, Sync). It keeps each sync group's devices and their encrypted
-// batches, in order, and relays pairing messages between two devices. Everything it stores for a
+// batches, in order, relays pairing messages between two devices, and tells a group's connected
+// devices when something new arrives (live.rs). Everything it stores for a
 // group is ciphertext: it can see the group, the device, sizes and times, and nothing else.
 
 mod api;
@@ -7,6 +8,7 @@ mod config;
 mod db;
 mod error;
 mod limits;
+mod live;
 mod pairing;
 mod tokens;
 
@@ -75,13 +77,18 @@ fn serve(config: Config) -> Result<(), String> {
         let addr = config.addr;
         let app = api::App::new(db, config);
         tokio::spawn(api::sweep_pairings(app.clone()));
+        let closing = app.clone();
         let app = api::router(app);
         let listener = tokio::net::TcpListener::bind(addr)
             .await
             .map_err(|error| format!("couldn't listen on {addr}: {error}"))?;
         println!("seiza-sync: listening on {addr}");
         axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
-            .with_graceful_shutdown(shutdown())
+            // Live connections stay open, so they're ended first, or shutting down would wait on them.
+            .with_graceful_shutdown(async move {
+                shutdown().await;
+                closing.close_live();
+            })
             .await
             .map_err(|error| error.to_string())
     })
