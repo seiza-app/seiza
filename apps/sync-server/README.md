@@ -70,6 +70,9 @@ is `seiza-sync health`.
 
 **Start your own group straight away.** By default the server accepts exactly one group, the first
 device's, and then closes to new ones, so it's yours from the moment your first computer joins.
+If that group is ever gone (its last computer chose **Leave sync…**, or **Move…** to another
+server), the server has no groups again, so it's open until the next computer starts one. To keep
+it closed then, stop the server, or set `SEIZA_SYNC_NEW_GROUPS: invites`.
 
 ### Sharing it with friends
 

@@ -7,7 +7,10 @@ import { dayStart, starDays } from './streaks';
 // Comets and rare events (PLAN §5). Like the rest of the sky, they're worked out from the log every
 // time, but with this device's secret mixed into every roll: the same log and secret always give
 // the same sky, and nobody can tell from the log alone what's coming. Each roll only looks at what
-// came before it, so what already happened never changes as the log grows.
+// came before it, so what already happened never changes as the log grows. The exception is a
+// session from before them that sync brings in from another computer (on joining a group, or
+// after time offline): the events, planets and constellations after it are worked out again, as
+// that computer already showed them. That's accepted: it was the user's own session.
 //
 // Changing the order things are drawn from a roll changes everyone's past events, so new looks
 // go at the end.
