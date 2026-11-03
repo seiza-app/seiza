@@ -85,6 +85,12 @@ function join() {
     await joinSyncGroup(address.value, code.value, deviceName.value);
   });
 }
+// What Join still waits for. The code doesn't carry the server, so it needs the address too.
+const joinNeeds = computed(() => {
+  if (!address.value.trim()) return "Type your sync server's address above, the same one your other computer uses.";
+  if (!code.value.trim()) return 'Type the code your other computer shows.';
+  return '';
+});
 function cancelJoin() {
   confirmingSky.value = false;
   joining.value = false;
@@ -239,9 +245,10 @@ const left = computed(() => {
               autocapitalize="off"
             />
           </label>
-          <button class="key next" type="submit" :disabled="busy || !address.trim() || !code.trim()">Join</button>
+          <button class="key next" type="submit" :disabled="busy || !!joinNeeds">Join</button>
           <button class="key" type="button" @click="cancelJoin">Cancel</button>
         </form>
+        <p v-if="joinNeeds" class="help note">{{ joinNeeds }}</p>
         <p class="help">On a computer that already syncs, choose Add a device in Settings › Sync for a code.</p>
       </div>
       <div v-else class="field">
@@ -251,7 +258,10 @@ const left = computed(() => {
           </button>
           <button class="key" type="button" :disabled="busy" @click="joining = true">Join with a pairing code</button>
         </div>
-        <p class="help">Start a group on your first computer, then join it from the others.</p>
+        <p class="help">
+          Start a group on your first computer, then join it from the others.
+          {{ address.trim() ? '' : "Both need your sync server's address above." }}
+        </p>
       </div>
       <p v-if="pairing.phase === 'failed'" class="help problem" role="alert">{{ sentence(pairing.problem) }}</p>
     </template>
