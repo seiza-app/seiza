@@ -117,46 +117,6 @@ pub(crate) fn quit(app: &AppHandle) {
     });
 }
 
-/// Ends a session from before Seiza last stopped (`run`), unless another computer in the sync
-/// group is still running it: then it goes on here too, and ends with theirs. Asking needs the
-/// connection to the server, so it waits a moment first, and asks again in case the network is
-/// slow to come back.
-fn end_session_from_before(app: &AppHandle, session_id: String, alive_at: i64) {
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        for wait in [5, 30] {
-            tokio::time::sleep(Duration::from_secs(wait)).await;
-            if sync::live::last_input_elsewhere(&app, &session_id).await.is_some() {
-                return;
-            }
-        }
-        let ended = engine(&app).end_session_from_before(&session_id, alive_at, now_ms());
-        match ended {
-            Ok(Some(_)) => {}
-            Ok(None) => return,
-            Err(error) => {
-                eprintln!("Seiza: couldn't end the session from before: {error}");
-                return;
-            }
-        }
-        changed(&app);
-        sync::exchange::fetch(&app);
-    });
-}
-
-/// Notes every minute that the running session is still running (`Engine::note_alive`).
-fn keep_alive(app: &AppHandle) {
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        loop {
-            tokio::time::sleep(Duration::from_secs(60)).await;
-            if let Err(error) = engine(&app).note_alive(now_ms()) {
-                eprintln!("Seiza: couldn't note the session is running: {error}");
-            }
-        }
-    });
-}
-
 /// Tells the window and the menu bar that satellites changed. Nothing else depends on them.
 pub(crate) fn satellites_changed(app: &AppHandle) {
     let snapshot = engine(app).snapshot(now_ms());
@@ -563,6 +523,46 @@ fn schedule_timer(app: &AppHandle, session: Option<Session>, profile_name: Optio
 const ALERT_SOUND: &str = "Glass";
 #[cfg(not(target_os = "macos"))]
 const ALERT_SOUND: &str = "default";
+
+/// Ends a session from before Seiza last stopped (`run`), unless another computer in the sync
+/// group is still running it: then it goes on here too, and ends with theirs. Asking needs the
+/// connection to the server, so it waits a moment first, and asks again in case the network is
+/// slow to come back.
+fn end_session_from_before(app: &AppHandle, session_id: String, alive_at: i64) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        for wait in [5, 30] {
+            tokio::time::sleep(Duration::from_secs(wait)).await;
+            if sync::live::last_input_elsewhere(&app, &session_id).await.is_some() {
+                return;
+            }
+        }
+        let ended = engine(&app).end_session_from_before(&session_id, alive_at, now_ms());
+        match ended {
+            Ok(Some(_)) => {}
+            Ok(None) => return,
+            Err(error) => {
+                eprintln!("Seiza: couldn't end the session from before: {error}");
+                return;
+            }
+        }
+        changed(&app);
+        sync::exchange::fetch(&app);
+    });
+}
+
+/// Notes every minute that the running session is still running (`Engine::note_alive`).
+fn keep_alive(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            if let Err(error) = engine(&app).note_alive(now_ms()) {
+                eprintln!("Seiza: couldn't note the session is running: {error}");
+            }
+        }
+    });
+}
 
 /// Opens the window, or brings it to the front if it's already open, and fetches what the sync
 /// group's other computers sent meanwhile.
