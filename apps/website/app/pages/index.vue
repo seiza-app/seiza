@@ -1,8 +1,10 @@
 <script setup lang="ts">
+// Says what Seiza is in the words people search with ("website blocker", "focus app"), since few
+// search for its name yet.
 const description =
-  'A free, open-source focus app. Block, tame or redirect distracting sites and apps, and watch your night sky fill with stars as you focus.';
+  'A free, open-source website and app blocker with a focus timer, for Mac and Linux. Tame or redirect distracting sites, and watch your night sky fill with stars.';
 
-usePageSeo({ title: 'Seiza · Tame distractions, watch your sky fill with stars', description });
+usePageSeo({ title: 'Seiza · A free website blocker and focus app for Mac and Linux', description });
 
 // Tells search engines what Seiza is: the site's name, and the app, which is free.
 useHead({
