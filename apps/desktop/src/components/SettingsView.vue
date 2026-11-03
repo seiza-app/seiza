@@ -556,7 +556,7 @@ const glowHelp = computed(() => {
     </section>
 
     <button class="card done mono" type="button" @click="emit('close')">Done · Back to the sky</button>
-    <p class="colophon mono">Seiza · AGPL-3.0 · Stays on this computer</p>
+    <p class="colophon mono">Seiza · AGPL-3.0 · Collects nothing</p>
     <p class="support">
       <a class="mono" :href="supportUrl" @click.prevent="openUrl(supportUrl)">Support Seiza on Ko-fi ↗</a>
     </p>

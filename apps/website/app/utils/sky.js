@@ -353,8 +353,9 @@ export function createSky(canvas, options = {}) {
   // The sky draws at up to 60 frames a second, which its slow twinkle and drift don't need more
   // than; on a faster screen it keeps up only while the stars are scrolling past.
   let last = performance.now();
+  let raf = 0;
   function frame(now) {
-    requestAnimationFrame(frame);
+    raf = requestAnimationFrame(frame);
     const scrolling = Math.abs(target.shift - state.shift) > 0.5;
     if (!scrolling && now - last < 15) return;
     const dt = Math.min(64, now - last);
@@ -367,9 +368,10 @@ export function createSky(canvas, options = {}) {
     draw(now);
   }
 
-  new ResizeObserver(resize).observe(canvas);
+  const observer = new ResizeObserver(resize);
+  observer.observe(canvas);
   resize();
-  if (!reduce) requestAnimationFrame(frame);
+  if (!reduce) raf = requestAnimationFrame(frame);
 
   return {
     state,
@@ -379,6 +381,11 @@ export function createSky(canvas, options = {}) {
         Object.assign(state, target);
         draw(0);
       }
+    },
+    // Stops drawing, for when the layout that owns the canvas goes away (as on error pages).
+    destroy() {
+      cancelAnimationFrame(raf);
+      observer.disconnect();
     },
   };
 }

@@ -16,6 +16,7 @@ export default defineConfig(
       '**/.nitro/',
       '**/.data/',
       'apps/desktop/src-tauri/',
+      '.claude/',
     ],
   },
   js.configs.recommended,

@@ -1,7 +1,7 @@
 <template>
   <section id="privacy" data-name="Privacy">
     <p class="kicker mono reveal"><b>05</b> · Private by design</p>
-    <h2 class="reveal" style="--d: 80ms">Nothing leaves your computer</h2>
+    <h2 class="reveal" style="--d: 80ms">Your data stays on your computer</h2>
     <p class="lede reveal" style="--d: 160ms">
       Seiza collects nothing. It has no accounts, no analytics, no ads, and no servers of its own.
     </p>

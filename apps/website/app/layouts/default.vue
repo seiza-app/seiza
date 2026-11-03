@@ -262,6 +262,8 @@ onBeforeUnmount(() => {
   resizer?.disconnect();
   seen?.disconnect();
   stopPageHook?.();
+  sky?.destroy();
+  sky = null;
 });
 </script>
 

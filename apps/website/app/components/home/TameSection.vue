@@ -69,7 +69,7 @@ onBeforeUnmount(() => clearInterval(countdown));
           <i></i><i></i><i></i><span class="url">{{ LEVELS[level].url }}</span>
         </div>
         <div class="viewport">
-          <div class="site" aria-label="A made-up video site">
+          <div class="site" role="group" aria-label="A made-up video site">
             <div class="main">
               <div class="player"></div>
               <h3>Building a bookshelf by hand, start to finish</h3>

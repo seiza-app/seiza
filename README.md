@@ -40,9 +40,9 @@ Seiza has no accounts and no telemetry. Everything stays on your device unless y
 
 ## Sync between your computers
 
-Optional, and off until you set it up. Your finished sessions and their goals, visits to redirected sites, constellation names and profiles reach every computer in your sync group, so each one draws the same sky, streaks and weekly report. Settings stay per computer.
+Optional, and off until you set it up. Your finished sessions and their goals, the session running now, visits to redirected sites, constellation names, profiles and each computer's name reach every computer in your sync group, so each one draws the same sky, streaks and weekly report, and a session started on one runs on all of them. Settings stay per computer.
 
-- **End-to-end encrypted.** The app encrypts everything before it's sent, with a key the server never gets. The server sees which computers are in a group, when they sync and how much they store, and nothing else.
+- **End-to-end encrypted.** The app encrypts everything before it's sent, with a key the server never gets. The server sees which computers are in a group, when they sync or are connected, how much they store and the IP addresses they connect from, and nothing else.
 - **No accounts.** Your first computer starts a group, and each other computer joins with a short one-time pairing code shown on one already in it.
 - **Your own server.** Seiza has no sync server of its own. You run the open-source one (one small program and one SQLite file), or use one a friend runs. Every computer keeps the whole log, so losing the server loses nothing.
 
@@ -130,7 +130,7 @@ Then use `http://localhost:8080` as the address in the app's Settings › Sync. 
 
 CI ([`.github/workflows`](.github/workflows)) checks formatting, lint, types and tests for every part, runs the extension's browser tests, checks dependency licenses and advisories, and builds the sync server's Docker image.
 
-- **Desktop app:** raise the version in `apps/desktop/src-tauri/tauri.conf.json`, `Cargo.toml` and both apps' `package.json`, then push a matching tag like `v0.2.0`. That builds the macOS and Linux apps onto a draft release ([`release.yml`](.github/workflows/release.yml)), which is published by hand. Installed apps from 0.2.0 on find it within a day and offer to update.
+- **Desktop app:** raise the version in `apps/desktop/src-tauri/tauri.conf.json`, `Cargo.toml` and `apps/desktop/package.json`, then push a matching tag like `v0.2.0`. That builds the macOS and Linux apps onto a draft release ([`release.yml`](.github/workflows/release.yml)), which is published by hand. Installed apps from 0.2.0 on find it within a day and offer to update.
 - **Sync server:** every change merged to `main` publishes `ghcr.io/seiza-app/seiza-sync:latest` (and `:sha-<commit>`) once its checks pass ([`sync-server.yml`](.github/workflows/sync-server.yml)).
 - **Extension:** `pnpm --filter @lock-in/extension zip` and `zip:firefox` build the store zips; [apps/extension/STORE.md](apps/extension/STORE.md) has the rest.
 - **Website:** deployed by Cloudflare Workers Builds whenever `main` changes.
