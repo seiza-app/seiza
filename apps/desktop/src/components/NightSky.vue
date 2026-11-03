@@ -349,11 +349,12 @@ function targets(width: number, height: number): { places: Map<string, Place>; r
   const list = props.constellations;
   if (props.week !== undefined) {
     // In week order, the week being looked at behind the header and the rest off to its sides.
+    const scale = window.devicePixelRatio || 1;
     for (const constellation of list) {
       const weeks = Math.round((constellation.weekStart - props.week) / weekMs);
       places.set(constellation.id, {
         x: 0.5 + weeks * 0.86,
-        y: Math.min(0.16, 96 / height),
+        y: Math.min(0.16, (48 * scale) / height),
         unit: 0.34,
         alpha: weeks === 0 ? 1 : 0.4,
         label: 0,
@@ -363,7 +364,6 @@ function targets(width: number, height: number): { places: Map<string, Place>; r
     // The week's month's planet off to the right of its constellation's name, clear of the
     // header's text, and the others in month order past it, out of sight.
     const month = monthNumber(props.week + weekMs / 2);
-    const scale = window.devicePixelRatio || 1;
     for (const planet of props.planets ?? []) {
       const months = monthNumber(planet.monthStart) - month;
       const radius = Math.min(width, height) * 0.05 * (0.45 + 0.55 * planet.size);
@@ -568,6 +568,20 @@ function resize() {
   sky.width = Math.round(sky.clientWidth * scale);
   sky.height = Math.round(sky.clientHeight * scale);
   draw(clock(performance.now()));
+}
+
+// Moving the window to a screen with another pixel ratio doesn't change its size in CSS pixels,
+// so the observer misses it. A query matches only the ratio it was made for, so it's made again
+// each time the ratio changes.
+let ratio: MediaQueryList | undefined;
+function watchRatio() {
+  ratio?.removeEventListener('change', ratioChanged);
+  ratio = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+  ratio.addEventListener('change', ratioChanged);
+}
+function ratioChanged() {
+  watchRatio();
+  resize();
 }
 
 /**
@@ -1366,6 +1380,7 @@ onMounted(() => {
   context = canvas.value!.getContext('2d');
   font = getComputedStyle(document.body).fontFamily || font;
   observer.observe(canvas.value!);
+  watchRatio();
   still.addEventListener('change', wake);
   window.addEventListener('pointermove', point);
   window.addEventListener('pointerdown', grab);
@@ -1384,6 +1399,7 @@ onUnmounted(() => {
   cancelAnimationFrame(frame);
   clearTimeout(nap);
   observer.disconnect();
+  ratio?.removeEventListener('change', ratioChanged);
   still.removeEventListener('change', wake);
   window.removeEventListener('pointermove', point);
   window.removeEventListener('pointerdown', grab);

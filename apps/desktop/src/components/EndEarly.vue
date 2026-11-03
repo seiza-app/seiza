@@ -2,7 +2,7 @@
 // Also in the extension (apps/extension/components/EndEarly.vue); keep the two copies working the
 // same. This one is styled for the desktop app's HUD frames.
 import { unlockText, type Strictness } from '@lock-in/core';
-import { computed, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 
 const props = defineProps<{
   lock: Strictness;
@@ -20,6 +20,9 @@ onUnmounted(() => clearInterval(tick));
 const target = unlockText();
 const typed = ref('');
 const typedRight = computed(() => typed.value.trim().replace(/\s+/g, ' ') === target);
+// Ready to type into, as the End early button that opened this is gone.
+const typing = ref<HTMLInputElement>();
+onMounted(() => typing.value?.focus());
 </script>
 
 <template>
@@ -35,6 +38,7 @@ const typedRight = computed(() => typed.value.trim().replace(/\s+/g, ' ') === ta
       <p>To end early, type this out:</p>
       <p class="target" aria-hidden="true">{{ target }}</p>
       <input
+        ref="typing"
         v-model="typed"
         :aria-label="`Type: ${target}`"
         autocomplete="off"

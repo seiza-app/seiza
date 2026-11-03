@@ -45,7 +45,10 @@ const detail = computed(() => {
 // The ruler: a long tick every `step` minutes, at most six of them, with four short ones between.
 const steps = [5, 10, 15, 30, 60, 120, 240];
 const step = computed(() => steps.find((s) => minutes.value / s <= 6) ?? Math.ceil(minutes.value / 6));
-const share = computed(() => Math.min(1, (now.value - props.session.startedAt) / (minutes.value * 60_000)));
+// From 0, as a live session from a computer whose clock is ahead can start a little in the future.
+const share = computed(() =>
+  Math.max(0, Math.min(1, (now.value - props.session.startedAt) / (minutes.value * 60_000))),
+);
 const marks = computed(() => {
   const list: number[] = [];
   for (let at = 0; at < minutes.value; at += step.value) list.push(at);
