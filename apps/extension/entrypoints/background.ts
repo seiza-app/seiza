@@ -19,7 +19,8 @@ export default defineBackground(() => {
   browser.runtime.onStartup.addListener(syncAll);
   activeSession.watch(sync);
   profiles.watch(syncAll);
-  siteSettings.watch(() => void syncScripts());
+  // Site settings decide which open tabs the redirect sync covers, as well as the added sites.
+  siteSettings.watch(syncAll);
   browser.permissions.onAdded.addListener(syncAll);
   browser.permissions.onRemoved.addListener(syncAll);
   browser.alarms.onAlarm.addListener((alarm) => {

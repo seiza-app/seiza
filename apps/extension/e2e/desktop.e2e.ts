@@ -164,6 +164,33 @@ describe('the desktop app link', () => {
     expect(states(await app.received()).at(-1)?.profilesBasedOn).toBe(sentAt);
   });
 
+  it('sends a profile and its running session edited together', async () => {
+    // Editing the running session's profile saves both in one go, as the actions do.
+    const storage = await stored(control);
+    const before = storage.syncedAt!;
+    const edited = storage.profiles!.map((p) => (p.id === 'writing' ? { ...p, name: 'Drafts' } : p));
+    const session = { ...storage.activeSession!, rules: edited.find((p) => p.id === 'writing') };
+    await setStored(control, { profiles: edited, activeSession: session });
+
+    // Both go to the app, each newer than before.
+    const lastSent = async () => {
+      const sent = states(await app.received());
+      return { profiles: sent.findLast((m) => m.profiles)?.profiles, session: sent.findLast((m) => m.activeSession) };
+    };
+    await expect
+      .poll(async () => (await lastSent()).profiles?.value.find((p) => p.id === 'writing')?.name)
+      .toBe('Drafts');
+    await expect.poll(async () => (await lastSent()).session?.activeSession?.value?.rules?.name).toBe('Drafts');
+    const { profiles: sentProfiles, session: sentSession } = await lastSent();
+    expect(sentProfiles!.updatedAt).toBeGreaterThan(before.profiles);
+    expect(sentSession!.activeSession!.updatedAt).toBeGreaterThan(before.activeSession);
+
+    // And neither stamp undid the other's.
+    const times = (await stored(control)).syncedAt!;
+    expect(times.profiles).toBe(sentProfiles!.updatedAt);
+    expect(times.activeSession).toBe(sentSession!.activeSession!.updatedAt);
+  });
+
   it('carries on by itself once the app goes away', async () => {
     await app.send({ type: 'unlinked' });
     await expect.poll(() => linked(control)).toBe(false);

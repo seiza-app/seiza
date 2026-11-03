@@ -69,7 +69,12 @@ export default defineConfig({
     ...(browser === 'firefox'
       ? {
           browser_specific_settings: {
-            gecko: { id: 'lock-in@lock-in-focus-app.github.io', data_collection_permissions: { required: ['none'] } },
+            gecko: {
+              id: 'lock-in@lock-in-focus-app.github.io',
+              data_collection_permissions: { required: ['none'] },
+              // The oldest Firefox that knows data_collection_permissions.
+              strict_min_version: '140.0',
+            },
           },
         }
       : forStore

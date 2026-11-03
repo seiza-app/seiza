@@ -91,19 +91,29 @@ export function linkDesktopApp(): void {
     }
   }
 
+  // The app's messages and this side's own changes are handled one at a time, in the order they
+  // came. Otherwise the app's state could be applied while "linked" is still reading this side's
+  // state to send, and this side would send the app's own session back as if it were its own.
+  // Two keys saved together would also stamp from the same old times, and one stamp would be lost.
+  let handling = Promise.resolve();
+  const inOrder = (work: () => Promise<void>, failure: string) =>
+    (handling = handling.then(work).catch((error) => console.error(failure, error)));
+
   // A change made here is newer than anything the app has, so it's stamped and sent. This
   // runs even while unlinked, so changes made without the app still win once it's back.
-  async function onLocalChange(key: SyncedKey, value: Profile[] | Session | SiteSettings[] | null) {
+  function onLocalChange(key: SyncedKey, value: Profile[] | Session | SiteSettings[] | null) {
     if (JSON.stringify(value) === fromApp[key]) return;
     delete fromApp[key];
-    const times = await syncedAt.getValue();
-    await syncedAt.setValue({ ...times, [key]: Math.max(Date.now(), (times[key] ?? 0) + 1) });
-    await sendState([key]);
+    void inOrder(async () => {
+      const times = await syncedAt.getValue();
+      await syncedAt.setValue({ ...times, [key]: Math.max(Date.now(), (times[key] ?? 0) + 1) });
+      await sendState([key]);
+    }, 'Seiza: could not send a change to the app');
   }
 
-  profiles.watch((value) => void onLocalChange('profiles', value));
-  activeSession.watch((value) => void onLocalChange('activeSession', value));
-  siteSettings.watch((value) => void onLocalChange('siteSettings', value));
+  profiles.watch((value) => onLocalChange('profiles', value));
+  activeSession.watch((value) => onLocalChange('activeSession', value));
+  siteSettings.watch((value) => onLocalChange('siteSettings', value));
 
   // Gate visits go to the app's log as they happen and as the user answers "why?".
   gateVisits.watch((visits, previous) => {
@@ -115,15 +125,8 @@ export function linkDesktopApp(): void {
 
   void desktopLinked.setValue(false);
   port = browser.runtime.connectNative(desktopHostName);
-  // The app's messages are handled one at a time, in the order they came. Otherwise its state
-  // could be applied while "linked" is still reading this side's state to send, and this side
-  // would send the app's own session back as if it were its own.
-  let handling = Promise.resolve();
   port.onMessage.addListener(
-    (message: FromDesktop) =>
-      (handling = handling
-        .then(() => onMessage(message))
-        .catch((error) => console.error('Seiza: could not handle a message from the app', error))),
+    (message: FromDesktop) => void inOrder(() => onMessage(message), 'Seiza: could not handle a message from the app'),
   );
   // Fires straight away when the app isn't installed. The extension carries on by itself.
   port.onDisconnect.addListener(() => {
