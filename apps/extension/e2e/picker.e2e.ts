@@ -9,6 +9,15 @@ import { controlPage, launch, setStored, startSession, stored, urls, type TestBr
 const site = 'http://picker.test/';
 const recipeId = 'site:picker.test';
 
+/**
+ * Clicks a popup button that closes the popup. A real click can lose the race: the popup may
+ * close before the mouse is let go, which fails with "Target closed". So the page clicks it
+ * itself, once this call has returned.
+ */
+async function clickAndClose(popup: Page, selector: string) {
+  await popup.$eval(selector, (button) => void setTimeout(() => (button as HTMLElement).click()));
+}
+
 describe('the element picker', () => {
   let t: TestBrowser;
   let control: Page;
@@ -28,7 +37,7 @@ describe('the element picker', () => {
     await popup.waitForSelector('main > .site .when button.session');
     await popup.click('main > .site .when button.session');
     await popup.waitForSelector('main > .site .pick button');
-    await popup.click('main > .site .pick button');
+    await clickAndClose(popup, 'main > .site .pick button');
     await tab.waitForSelector('lock-in-picker >>> .panel', { visible: true });
   }
 
@@ -245,7 +254,7 @@ describe('the element picker', () => {
       const target = await t.browser.waitForTarget((x) => x.url().endsWith('/popup.html') && !earlier.has(x));
       const popup = (await target.asPage())!;
       await popup.waitForSelector('main > .site .pick button');
-      await popup.click('main > .site .pick button');
+      await clickAndClose(popup, 'main > .site .pick button');
       await reddit.waitForSelector(feedSwitch, { visible: true });
     }
 
