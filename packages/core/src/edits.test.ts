@@ -149,6 +149,8 @@ describe('managing profiles', () => {
     expect(withProfileRenamed(profiles, 'focus', 'Deep focus')[0]!.name).toBe('Deep focus');
     expect(withProfileRenamed(profiles, 'focus', '   ')[0]!.name).toBe('Focus');
     expect(withProfileRenamed(profiles, 'focus', 'x'.repeat(100))[0]!.name).toHaveLength(40);
+    // Cut by characters, so a long name never ends in half an emoji.
+    expect(withProfileRenamed(profiles, 'focus', 'x'.repeat(39) + '🌙🌙')[0]!.name).toBe('x'.repeat(39) + '🌙');
   });
 
   it('moves a profile, stopping at either end', () => {

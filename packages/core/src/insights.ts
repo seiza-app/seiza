@@ -2,6 +2,7 @@ import type { Activity } from './generated/Activity';
 import type { GateVisitRecord } from './generated/GateVisitRecord';
 import type { SessionRecord } from './generated/SessionRecord';
 import { maxPlanLength } from './settings';
+import { cutChars } from './text';
 
 // The weekly report, worked out from what the desktop app logged. Weeks are seven days in local
 // time, starting on the first day of the week set on the user's computer, so a day or an hour
@@ -15,16 +16,17 @@ const minuteMs = 60_000;
  */
 export function weekStart(at: number, firstDay = 1): number {
   const date = new Date(at);
-  date.setHours(0, 0, 0, 0);
-  date.setDate(date.getDate() - ((date.getDay() - firstDay + 7) % 7));
-  return date.getTime();
+  // Built from the date alone: where a day has no midnight (clocks going forward at 00:00, as in
+  // Chile), it starts at 01:00, and every day of that week has to land on the same time.
+  const offset = (date.getDay() - firstDay + 7) % 7;
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() - offset).getTime();
 }
 
 /** The start of the week `weeks` after the one starting at `start`, or before it if negative. */
 export function addWeeks(start: number, weeks: number): number {
   const date = new Date(start);
-  date.setDate(date.getDate() + weeks * 7);
-  return date.getTime();
+  // From the date alone too, so a week starting at 01:00 doesn't carry that hour to the next.
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + weeks * 7).getTime();
 }
 
 /** Which day of the week starting at `start` the time `at` falls on, its first day being 0. */
@@ -336,7 +338,7 @@ function planIdea(
   });
   const [profileId] = [...groupBy(profileIds, (id) => id)].sort((a, b) => b[1].length - a[1].length)[0] ?? [];
   if (!draft || !profileId) return undefined;
-  return { profileId, recipeId: site.recipeId, plan: draft(siteName(site.recipeId)).slice(0, maxPlanLength) };
+  return { profileId, recipeId: site.recipeId, plan: cutChars(draft(siteName(site.recipeId)), maxPlanLength) };
 }
 
 const partsOfDay = [

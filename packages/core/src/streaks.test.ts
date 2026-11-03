@@ -34,9 +34,10 @@ describe('star days', () => {
   });
 
   it('keeps a streak going across the end of a month and a daylight saving change', () => {
-    // October 25 in Europe and March 30 or April 5 in the south: one of the days is 23 or 25 hours.
-    const sky = [27, 28, 29, 30, 31, 32, 33].map((day) => star(day, 23));
-    expect(starDays(sky).map((day) => day.streakDays)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    // 22 October to 3 November: clocks change on 25 October in Europe and 1 November in the US.
+    const days = Array.from({ length: 13 }, (_, i) => i + 1);
+    const sky = days.map((n) => star(21 + n, 23));
+    expect(starDays(sky).map((day) => day.streakDays)).toEqual(days);
   });
 });
 

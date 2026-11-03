@@ -11,14 +11,6 @@ export const maxQuoteAuthorLength = 80;
 /** How much more likely each of the user's own quotes is than a bundled one. */
 const ownQuoteWeight = 3;
 
-/** The list with a new quote added, or the same list if there's no quote to add or no room. */
-export function withOwnQuote(list: readonly OwnQuote[], id: string, text: string, author: string): OwnQuote[] {
-  const cleanText = text.trim().slice(0, maxQuoteLength).trim();
-  const cleanAuthor = author.trim().slice(0, maxQuoteAuthorLength).trim();
-  if (!cleanText || list.length >= maxOwnQuotes) return [...list];
-  return [...list, { id, text: cleanText, ...(cleanAuthor && { author: cleanAuthor }) }];
-}
-
 export function withOwnQuoteRemoved(list: readonly OwnQuote[], id: string): OwnQuote[] {
   return list.filter((quote) => quote.id !== id);
 }

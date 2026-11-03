@@ -76,6 +76,24 @@ describe('weeks', () => {
     expect(weekStart(at(-1, 9), 6)).toBe(new Date(2026, 9, 24).getTime());
   });
 
+  it('have one start, even where a day has no midnight', () => {
+    // Chile's clocks go forward at midnight, so in Santiago (one of the zones the test script
+    // runs in) Sunday 6 September 2026 starts at 01:00. Elsewhere this passes without testing much.
+    if (Intl.DateTimeFormat().resolvedOptions().timeZone === 'America/Santiago') {
+      expect(new Date(2026, 8, 6).getHours()).toBe(1);
+    }
+    const day = (date: number, hour = 12) => new Date(2026, 8, date, hour).getTime();
+    // The week from Monday 31 August, ending on the day with no midnight.
+    for (const date of [0, 1, 2, 3, 4, 5]) {
+      expect(weekStart(day(date))).toBe(weekStart(day(6, 9)));
+    }
+    // The week starting on that day, and the ones either side of it.
+    const sunday = weekStart(day(6), 0);
+    expect(weekStart(day(12), 0)).toBe(sunday);
+    expect(addWeeks(sunday, 1)).toBe(weekStart(day(13), 0));
+    expect(addWeeks(sunday, -1)).toBe(weekStart(day(5), 0));
+  });
+
   it('step a calendar week at a time, even over a daylight saving change', () => {
     for (const weeks of [-2, -1, 1, 2]) {
       expect(addWeeks(monday, weeks)).toBe(new Date(2026, 9, 26 + weeks * 7).getTime());

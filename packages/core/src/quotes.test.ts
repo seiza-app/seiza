@@ -1,19 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { maxOwnQuotes, maxQuoteLength, pickQuote, quoteForDay, withOwnQuote, withOwnQuoteRemoved } from './quotes';
-
-describe('withOwnQuote', () => {
-  it('adds a trimmed quote, with an author only if there is one', () => {
-    expect(withOwnQuote([], 'a', '  Ship it. ', '  ')).toEqual([{ id: 'a', text: 'Ship it.' }]);
-    expect(withOwnQuote([], 'a', 'Ship it.', ' Me ')).toEqual([{ id: 'a', text: 'Ship it.', author: 'Me' }]);
-  });
-
-  it('skips empty quotes and keeps to the limits', () => {
-    expect(withOwnQuote([], 'a', ' \n ', 'Me')).toEqual([]);
-    expect(withOwnQuote([], 'a', 'x'.repeat(maxQuoteLength + 5), '')[0]!.text).toHaveLength(maxQuoteLength);
-    const full = Array.from({ length: maxOwnQuotes }, (_, i) => ({ id: String(i), text: 'Line' }));
-    expect(withOwnQuote(full, 'new', 'One more', '')).toHaveLength(maxOwnQuotes);
-  });
-});
+import { pickQuote, quoteForDay, withOwnQuoteRemoved } from './quotes';
 
 it('removes a quote by id', () => {
   const list = [
