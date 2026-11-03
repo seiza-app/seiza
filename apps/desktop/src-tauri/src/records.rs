@@ -1,13 +1,14 @@
 //! The records that sync between devices (PLAN §8 Sync): finished sessions, trips to redirected
-//! sites, constellation names and profiles. This is only what goes in and out of the database; sync itself
-//! wraps them up, encrypts them and sends them on.
+//! sites, constellation names, profiles and satellites. This is only what goes in and out of the
+//! database; sync itself wraps them up, encrypts them and sends them on.
 //!
 //! Every record carries `updated_at`, when it last changed (epoch ms), and the newest one wins.
 //! Each change made here also takes the next number from a counter (`change_seq`), so sync can
 //! ask for everything changed since the last number it sent, whatever the clocks say. Records
 //! from other devices are saved with their own `updated_at` and number 0, so they aren't sent
-//! back. Nothing is deleted: a cleared constellation name stays, with no name, and a deleted
-//! profile stays, marked deleted. Sample data (samples.rs) never leaves this device.
+//! back. Nothing is deleted: a cleared constellation name stays, with no name, a deleted
+//! profile stays, marked deleted, and so does a deleted satellite, without its text. Sample data
+//! (samples.rs) never leaves this device.
 //!
 //! Profiles are also kept as one list in `state`, in the order the extension shows them, which
 //! is what the app and the extension use. The `profiles` table here is sync's copy of each one.
@@ -19,7 +20,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 use crate::samples::SAMPLE_PREFIX;
-use crate::session::{EndReason, GateVisit, Profile, SessionRecord};
+use crate::satellites::{MAX_TEXT, SatelliteState};
+use crate::session::{EndReason, GateVisit, Profile, SessionRecord, truncate};
 use crate::store::insert_session;
 
 /// One record, as it travels between devices: `{"kind": "session", "id": …, "updatedAt": …}`.
@@ -30,6 +32,7 @@ pub enum Record {
     Trip(SyncedTrip),
     ConstellationName(SyncedName),
     Profile(SyncedProfile),
+    Satellite(SyncedSatellite),
 }
 
 /// A finished session from the log.
@@ -72,6 +75,22 @@ pub struct SyncedProfile {
     pub updated_at: i64,
 }
 
+/// A satellite: what it says, and where it is. A deleted one has no text.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncedSatellite {
+    pub id: String,
+    pub text: String,
+    pub launched_at: i64,
+    /// The session it was launched in, if one was running.
+    pub session_id: Option<String>,
+    pub state: SatelliteState,
+    pub state_at: i64,
+    pub snoozes: u32,
+    pub tasked_at: Option<i64>,
+    pub updated_at: i64,
+}
+
 impl Record {
     pub fn id(&self) -> &str {
         match self {
@@ -79,6 +98,7 @@ impl Record {
             Record::Trip(t) => &t.visit.id,
             Record::ConstellationName(n) => &n.id,
             Record::Profile(p) => &p.id,
+            Record::Satellite(s) => &s.id,
         }
     }
 
@@ -88,20 +108,30 @@ impl Record {
             Record::Trip(t) => t.updated_at,
             Record::ConstellationName(n) => n.updated_at,
             Record::Profile(p) => p.updated_at,
+            Record::Satellite(s) => s.updated_at,
         }
     }
 
     /// Whether this copy should replace `here`, another copy of the same record. The newest
-    /// wins, except that an answered "Did you do it?" beats an unanswered one whatever the time.
+    /// wins, except that an answered "Did you do it?" beats an unanswered one whatever the time,
+    /// and a deleted satellite stays deleted, so what it said doesn't come back.
     /// A tie goes the same way on every device, by comparing the two as JSON, and a copy that's
     /// the same as `here` doesn't replace it.
     pub fn wins_over(&self, here: &Record) -> bool {
-        if let (Record::Session(theirs), Record::Session(ours)) = (self, here) {
-            match (theirs.session.goal_met.is_some(), ours.session.goal_met.is_some()) {
-                (true, false) => return true,
-                (false, true) => return false,
-                _ => {}
+        let beats = match (self, here) {
+            (Record::Session(theirs), Record::Session(ours)) => {
+                Some((theirs.session.goal_met.is_some(), ours.session.goal_met.is_some()))
             }
+            (Record::Satellite(theirs), Record::Satellite(ours)) => Some((
+                theirs.state == SatelliteState::Deleted,
+                ours.state == SatelliteState::Deleted,
+            )),
+            _ => None,
+        };
+        match beats {
+            Some((true, false)) => return true,
+            Some((false, true)) => return false,
+            _ => {}
         }
         match self.updated_at().cmp(&here.updated_at()) {
             Ordering::Greater => true,
@@ -140,6 +170,8 @@ const TRIP_COLUMNS: &str =
     "id, recipe_id, at, destination, why, intention, continued, session_id, updated_at, change_seq";
 const NAME_COLUMNS: &str = "id, name, updated_at, change_seq";
 const PROFILE_COLUMNS: &str = "id, profile, deleted, updated_at, change_seq";
+const SATELLITE_COLUMNS: &str =
+    "id, text, launched_at, session_id, state, state_at, snoozes, tasked_at, updated_at, change_seq";
 
 fn session_row(row: &Row) -> rusqlite::Result<(Record, i64)> {
     let session = SessionRecord {
@@ -204,15 +236,31 @@ fn profile_row(row: &Row) -> rusqlite::Result<(Record, i64)> {
     Ok((record, row.get(4)?))
 }
 
+fn satellite_row(row: &Row) -> rusqlite::Result<(Record, i64)> {
+    let record = Record::Satellite(SyncedSatellite {
+        id: row.get(0)?,
+        text: row.get(1)?,
+        launched_at: row.get(2)?,
+        session_id: row.get(3)?,
+        state: SatelliteState::parse(&row.get::<_, String>(4)?).unwrap_or(SatelliteState::Back),
+        state_at: row.get(5)?,
+        snoozes: row.get(6)?,
+        tasked_at: row.get(7)?,
+        updated_at: row.get(8)?,
+    });
+    Ok((record, row.get(9)?))
+}
+
 /// Reads a row as a record and its number from the counter of changes made here.
 type ReadRow = fn(&Row) -> rusqlite::Result<(Record, i64)>;
 
 /// Each kind of record: its table, its columns and how to read a row of them.
-const TABLES: [(&str, &str, ReadRow); 4] = [
+const TABLES: [(&str, &str, ReadRow); 5] = [
     ("sessions", SESSION_COLUMNS, session_row),
     ("gate_visits", TRIP_COLUMNS, trip_row),
     ("constellation_names", NAME_COLUMNS, name_row),
     ("profiles", PROFILE_COLUMNS, profile_row),
+    ("satellites", SATELLITE_COLUMNS, satellite_row),
 ];
 
 /// Up to `limit` records changed here after `cursor`, in the order they changed, and the
@@ -252,6 +300,7 @@ pub fn apply(db: &mut Connection, records: &[Record]) -> Result<usize> {
             Record::Trip(_) => 1,
             Record::ConstellationName(_) => 2,
             Record::Profile(_) => 3,
+            Record::Satellite(_) => 4,
         };
         let (table, columns, read) = TABLES[index];
         let here = tx
@@ -304,6 +353,31 @@ fn save(db: &Connection, record: &Record) -> Result<()> {
             db.execute(
                 &format!("INSERT OR REPLACE INTO profiles ({PROFILE_COLUMNS}) VALUES (?1, ?2, ?3, ?4, 0)"),
                 params![p.id, serde_json::to_string(&p.profile)?, p.deleted, p.updated_at],
+            )?;
+        }
+        Record::Satellite(s) => {
+            // Kept to what the box allows, and a deleted one keeps nothing of what it said.
+            let mut text = if s.state == SatelliteState::Deleted {
+                String::new()
+            } else {
+                s.text.clone()
+            };
+            truncate(&mut text, MAX_TEXT);
+            db.execute(
+                &format!(
+                    "INSERT OR REPLACE INTO satellites ({SATELLITE_COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0)"
+                ),
+                params![
+                    s.id,
+                    text,
+                    s.launched_at,
+                    s.session_id,
+                    s.state.as_str(),
+                    s.state_at,
+                    s.snoozes,
+                    s.tasked_at,
+                    s.updated_at
+                ],
             )?;
         }
     }
@@ -741,5 +815,106 @@ mod tests {
             .map(|r| (r.id().to_owned(), r.updated_at()))
             .collect();
         assert_eq!(sent, [("a".to_string(), 42), ("b".to_string(), 42)]);
+    }
+
+    fn satellite(id: &str, state: SatelliteState, updated_at: i64) -> Record {
+        Record::Satellite(SyncedSatellite {
+            id: id.into(),
+            text: "call Sam".into(),
+            launched_at: MIN,
+            session_id: None,
+            state,
+            state_at: updated_at,
+            snoozes: 0,
+            tasked_at: None,
+            updated_at,
+        })
+    }
+
+    /// What's kept of each satellite: its text and state.
+    fn kept_satellites(store: &Store) -> Vec<(String, SatelliteState)> {
+        let history = store.history().unwrap();
+        history.satellites.into_iter().map(|s| (s.text, s.state)).collect()
+    }
+
+    #[test]
+    fn a_satellite_travels_flat_with_a_kind() {
+        let record = satellite("a", SatelliteState::Back, 7);
+        let json = serde_json::to_value(&record).unwrap();
+        assert_eq!(json["kind"], "satellite");
+        assert_eq!(json["id"], "a");
+        assert_eq!(json["text"], "call Sam");
+        assert_eq!(json["state"], "back");
+        assert_eq!(json["launchedAt"], MIN);
+        assert_eq!(json["updatedAt"], 7);
+        assert_eq!(serde_json::from_value::<Record>(json).unwrap(), record);
+    }
+
+    #[test]
+    fn a_deleted_satellite_stays_deleted_and_keeps_nothing_it_said() {
+        let mut store = Store::open_in_memory().unwrap();
+        assert_eq!(store.apply(&[satellite("a", SatelliteState::Back, 10)]).unwrap(), 1);
+        assert_eq!(store.apply(&[satellite("a", SatelliteState::Task, 20)]).unwrap(), 1);
+        assert_eq!(kept_satellites(&store), [("call Sam".into(), SatelliteState::Task)]);
+
+        // Deleted elsewhere, even before the newest change here, it's deleted, text and all.
+        assert_eq!(store.apply(&[satellite("a", SatelliteState::Deleted, 15)]).unwrap(), 1);
+        assert_eq!(kept_satellites(&store), [(String::new(), SatelliteState::Deleted)]);
+        // And a newer copy from a computer that hadn't heard doesn't bring it back.
+        assert_eq!(store.apply(&[satellite("a", SatelliteState::Done, 30)]).unwrap(), 0);
+        assert_eq!(kept_satellites(&store), [(String::new(), SatelliteState::Deleted)]);
+    }
+
+    #[test]
+    fn satellites_launched_and_moved_here_are_sent() {
+        use crate::satellites::Satellite;
+
+        let store = Store::open_in_memory().unwrap();
+        let launched = Satellite {
+            id: "a".into(),
+            text: "call Sam".into(),
+            launched_at: MIN,
+            state: SatelliteState::Orbiting,
+            state_at: MIN,
+        };
+        store.save_satellite(&launched, Some("s1")).unwrap();
+        let (changed, cursor) = store.changed_since(0, 100).unwrap();
+        let mut expected = satellite("a", SatelliteState::Orbiting, MIN);
+        if let Record::Satellite(s) = &mut expected {
+            s.session_id = Some("s1".into());
+        }
+        assert_eq!(changed, [expected]);
+
+        store.move_satellite("a", SatelliteState::Task, 2 * MIN).unwrap();
+        let (changed, _) = store.changed_since(cursor, 100).unwrap();
+        assert!(matches!(
+            &changed[..],
+            [Record::Satellite(s)] if s.state == SatelliteState::Task
+                && s.tasked_at == Some(2 * MIN)
+                && s.updated_at == 2 * MIN
+        ));
+    }
+
+    #[test]
+    fn satellites_from_before_sync_are_ready_to_send() {
+        use crate::store::MIGRATIONS;
+
+        let db = Connection::open_in_memory().unwrap();
+        for migration in &MIGRATIONS[..9] {
+            db.execute_batch(migration).unwrap();
+        }
+        db.pragma_update(None, "user_version", 9).unwrap();
+        db.execute_batch(
+            "INSERT INTO constellation_names (id, name, change_seq) VALUES ('c', 'Orion', 1);
+             UPDATE change_counter SET last = 1;
+             INSERT INTO satellites (id, text, launched_at, state, state_at) VALUES ('a', 'call Sam', 60000, 'back', 120000);",
+        )
+        .unwrap();
+        let store = Store::migrated_for_tests(db);
+        let sent: Vec<_> = everything(&store)
+            .iter()
+            .map(|r| (r.id().to_owned(), r.updated_at()))
+            .collect();
+        assert_eq!(sent, [("c".to_string(), 0), ("a".to_string(), 2 * MIN)]);
     }
 }

@@ -524,7 +524,7 @@ mod tests {
         let key = GroupKey::generate();
         let sealed = |json: &str| key.seal(Purpose::Batch, "group", json.as_bytes());
         // A kind of record it doesn't know is left out, and the rest are saved.
-        let mixed = r#"{"v":1,"records":[{"kind":"satellite","id":"s"},
+        let mixed = r#"{"v":1,"records":[{"kind":"comet","id":"s"},
             {"kind":"constellationName","id":"a","name":"Orion","updatedAt":1}]}"#;
         assert_eq!(
             open(&key, "group", &sealed(mixed)),

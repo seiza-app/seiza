@@ -5,7 +5,7 @@ one Rust program with one SQLite file, in one Docker image of a few megabytes. I
 thread in about 5 MB of memory, and answers in under a millisecond, ten devices at once included.
 
 It syncs each computer's finished sessions (with their goals), visits to redirected sites,
-constellation names and profiles, and live sessions: one started on one computer starts on the
+constellation names, profiles and satellites, and live sessions: one started on one computer starts on the
 others that follow the group's sessions (Settings › Sync).
 
 ## Setting it up, start to finish
