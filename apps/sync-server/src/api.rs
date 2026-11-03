@@ -25,6 +25,7 @@ use crate::config::Config;
 use crate::db::{self, AddBatch, CreateGroup, DeviceRef, NewDevice};
 use crate::error::ApiError;
 use crate::limits::{Kind, Limits};
+use crate::live::{self, Hub, Note};
 use crate::pairing::{Pairings, Side};
 use crate::tokens;
 
@@ -34,6 +35,8 @@ const PROTOCOL: &str = "1";
 const MAX_BATCH_BYTES: usize = 1024 * 1024;
 /// The largest of any other request body.
 const MAX_BODY_BYTES: usize = 16 * 1024;
+/// The largest message between a group's devices (live.rs), sealed.
+const MAX_LIVE_MESSAGE_BYTES: usize = 4 * 1024;
 /// The largest device label (encrypted by the app, so a little bigger than the name).
 const MAX_LABEL_BYTES: usize = 512;
 /// A page of batches holds at most this many, or about this many bytes.
@@ -50,6 +53,7 @@ struct Inner {
     config: Config,
     limits: Limits,
     pairings: Pairings,
+    live: Arc<Hub>,
     clock: Box<dyn Fn() -> i64 + Send + Sync>,
 }
 
@@ -64,12 +68,18 @@ impl App {
             config,
             limits: Limits::default(),
             pairings: Pairings::default(),
+            live: Arc::default(),
             clock: Box::new(clock),
         }))
     }
 
     fn now(&self) -> i64 {
         (self.0.clock)()
+    }
+
+    /// Ends the live connections, for shutting down.
+    pub fn close_live(&self) {
+        self.0.live.close();
     }
 
     /// Runs a database call on a thread that's allowed to wait for SQLite.
@@ -120,6 +130,7 @@ pub fn router(app: App) -> Router {
                 .get(list_batches)
                 .layer(DefaultBodyLimit::max(MAX_BATCH_BYTES)),
         )
+        .route("/live", get(listen).post(tell))
         .route("/pairings", post(open_pairing))
         .route("/pairings/{slot}", delete(end_pairing))
         .route("/pairings/{slot}/join", post(join_pairing))
@@ -278,8 +289,11 @@ async fn remove_device(
     Authed(device): Authed,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let removed = app.db(move |db| db::remove_device(db, &device.group_id, &id)).await?;
+    let group_id = device.group_id.clone();
+    let removing = id.clone();
+    let removed = app.db(move |db| db::remove_device(db, &group_id, &removing)).await?;
     if removed {
+        app.0.live.tell(&device.group_id, Note::Removed { device: id });
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::NotFound)
@@ -296,8 +310,12 @@ async fn add_batch(State(app): State<App>, Authed(device): Authed, body: Bytes) 
         return Err(ApiError::BadRequest("a batch can't be empty"));
     }
     let (max, now) = (app.0.config.group_max_bytes, app.now());
-    match app.db(move |db| db::add_batch(db, &device, &body, max, now)).await? {
-        AddBatch::Added { seq } => Ok(Json(SeqResponse { seq })),
+    let adding = device.clone();
+    match app.db(move |db| db::add_batch(db, &adding, &body, max, now)).await? {
+        AddBatch::Added { seq } => {
+            app.0.live.tell(&device.group_id, Note::Batch { seq, from: device.id });
+            Ok(Json(SeqResponse { seq }))
+        }
         AddBatch::Full => Err(ApiError::TooLarge("this sync group is full")),
     }
 }
@@ -344,6 +362,37 @@ async fn list_batches(
             .collect(),
         more,
     }))
+}
+
+/// A device's live connection (live.rs).
+async fn listen(State(app): State<App>, headers: HeaderMap, Authed(device): Authed) -> Result<Response, ApiError> {
+    let token = bearer(&headers).ok_or(ApiError::Unauthorized)?;
+    let checking = app.clone();
+    let events = live::listen(&app.0.live, device, move || {
+        let (app, token) = (checking.clone(), token.clone());
+        async move {
+            let now = app.now();
+            // A database error leaves it connected, to be checked again later.
+            app.db(move |db| db::device_for_token(db, &token, now))
+                .await
+                .map_or(true, |device| device.is_some())
+        }
+    })?;
+    // nginx would otherwise hold events back until it had a bufferful.
+    Ok(([("x-accel-buffering", "no")], events).into_response())
+}
+
+/// Passes a sealed message on to the group's other connected devices. It isn't kept.
+async fn tell(State(app): State<App>, Authed(device): Authed, body: Bytes) -> Result<StatusCode, ApiError> {
+    if body.is_empty() || body.len() > MAX_LIVE_MESSAGE_BYTES {
+        return Err(ApiError::BadRequest("empty or too long"));
+    }
+    let note = Note::Message {
+        from: device.id,
+        data: STANDARD.encode(&body),
+    };
+    app.0.live.tell(&device.group_id, note);
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Serialize)]
@@ -598,6 +647,41 @@ mod tests {
         }
     }
 
+    /// A live connection's events, as they come.
+    struct Events {
+        body: Body,
+        text: String,
+    }
+
+    impl Events {
+        /// The next event's name and data, or None if the stream ended or nothing came for a
+        /// moment. Comments (the heartbeat) are skipped.
+        async fn next(&mut self) -> Option<(String, Value)> {
+            loop {
+                if let Some(end) = self.text.find("\n\n") {
+                    let block: String = self.text.drain(..end + 2).collect();
+                    let field = |name: &str| {
+                        block
+                            .lines()
+                            .find_map(|line| line.strip_prefix(name).map(str::to_owned))
+                    };
+                    let Some(name) = field("event: ") else { continue };
+                    let data = field("data: ").and_then(|d| serde_json::from_str(&d).ok());
+                    return Some((name, data.unwrap_or(Value::Null)));
+                }
+                let frame = tokio::time::timeout(Duration::from_millis(200), self.body.frame()).await;
+                match frame {
+                    Ok(Some(Ok(frame))) => {
+                        if let Ok(data) = frame.into_data() {
+                            self.text.push_str(&String::from_utf8_lossy(&data));
+                        }
+                    }
+                    _ => return None,
+                }
+            }
+        }
+    }
+
     fn label(text: &str) -> String {
         STANDARD.encode(text)
     }
@@ -703,6 +787,23 @@ mod tests {
                 )
                 .await;
             assert_eq!(status, StatusCode::OK);
+        }
+
+        /// Opens a device's live connection.
+        async fn listen(&self, token: &str) -> Events {
+            let request = axum::http::Request::builder()
+                .uri("/v1/live")
+                .header("Seiza-Protocol", "1")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap();
+            let response = self.router.clone().oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.headers()["content-type"], "text/event-stream");
+            Events {
+                body: response.into_body(),
+                text: String::new(),
+            }
         }
 
         async fn device_count(&self, token: &str) -> usize {
@@ -979,5 +1080,89 @@ mod tests {
         }
         assert_eq!(server.send(join("203.0.113.5")).await.0, StatusCode::TOO_MANY_REQUESTS);
         assert_eq!(server.send(join("203.0.113.6")).await.0, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn live_connections_hear_of_the_others_batches_and_messages() {
+        let server = Server::new(NewGroups::Open);
+        let (_, laptop, laptop_token) = server.first_device().await;
+        let desktop_token = server.pair(&laptop_token).await;
+        let mut laptop_events = server.listen(&laptop_token).await;
+        let mut desktop_events = server.listen(&desktop_token).await;
+        assert_eq!(laptop_events.next().await.unwrap().0, "ready");
+        assert_eq!(desktop_events.next().await.unwrap().0, "ready");
+
+        let (status, _) = server
+            .send(
+                Call::new(Method::POST, "/v1/batches")
+                    .token(&laptop_token)
+                    .bytes(b"sealed"),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(desktop_events.next().await, Some(("batch".into(), json!({ "seq": 1 }))));
+        // Not its own.
+        assert_eq!(laptop_events.next().await, None);
+
+        let (status, _) = server
+            .send(Call::new(Method::POST, "/v1/live").token(&laptop_token).bytes(b"idle?"))
+            .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert_eq!(
+            desktop_events.next().await,
+            Some((
+                "message".into(),
+                json!({ "deviceId": laptop, "data": STANDARD.encode("idle?") })
+            ))
+        );
+        let too_long = vec![1; MAX_LIVE_MESSAGE_BYTES + 1];
+        let (status, _) = server
+            .send(
+                Call::new(Method::POST, "/v1/live")
+                    .token(&laptop_token)
+                    .bytes(&too_long),
+            )
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn live_connections_end_when_the_device_goes_or_connects_again() {
+        let server = Server::new(NewGroups::Open);
+        let (_, _, laptop_token) = server.first_device().await;
+        let desktop_token = server.pair(&laptop_token).await;
+        let (_, devices) = server
+            .send(Call::new(Method::GET, "/v1/devices").token(&desktop_token))
+            .await;
+        let desktop = devices["you"].as_str().unwrap().to_string();
+
+        let mut first = server.listen(&desktop_token).await;
+        assert_eq!(first.next().await.unwrap().0, "ready");
+        let mut second = server.listen(&desktop_token).await;
+        assert_eq!(second.next().await.unwrap().0, "ready");
+        assert!(first.body.frame().await.is_none(), "the older one ends");
+
+        let (status, _) = server
+            .send(Call::new(Method::DELETE, &format!("/v1/devices/{desktop}")).token(&laptop_token))
+            .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert!(second.body.frame().await.is_none());
+        assert_eq!(
+            server
+                .send(Call::new(Method::GET, "/v1/live").token(&desktop_token))
+                .await
+                .0,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+
+    #[tokio::test]
+    async fn live_connections_end_when_the_server_shuts_down() {
+        let server = Server::new(NewGroups::Open);
+        let (_, _, token) = server.first_device().await;
+        let mut events = server.listen(&token).await;
+        assert_eq!(events.next().await.unwrap().0, "ready");
+        server.app.close_live();
+        assert!(events.body.frame().await.is_none());
     }
 }
