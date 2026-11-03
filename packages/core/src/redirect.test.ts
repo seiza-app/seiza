@@ -175,6 +175,8 @@ describe('gate visits', () => {
   it('leaves out empty intentions and trims long ones', () => {
     expect(withGateVisitContinued([visit('a', 'reddit', today)], 'a', '   ')[0]).not.toHaveProperty('intention');
     expect(withGateVisitContinued([visit('a', 'reddit', today)], 'a', 'x'.repeat(500))[0]!.intention).toHaveLength(200);
+    const emoji = withGateVisitContinued([visit('a', 'reddit', today)], 'a', 'x'.repeat(199) + '🌙🌙');
+    expect(emoji[0]!.intention).toBe('x'.repeat(199) + '🌙');
   });
 });
 

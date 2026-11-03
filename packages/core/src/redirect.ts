@@ -5,6 +5,7 @@ import { otherSitesLevel, sessionProfile } from './profiles';
 import { findRecipe } from './recipe';
 import { redirectSettingsFor } from './settings';
 import { ownSiteDomain, ownSiteRecipe } from './sites';
+import { cutChars } from './text';
 import type { GateVisit, PassExpiry, Profile, Session, SiteLevel, SiteRecipe, WhyReason } from './types';
 
 /** Longest intention we keep. */
@@ -158,7 +159,7 @@ export function withGateVisit(visits: readonly GateVisit[], visit: GateVisit): G
 
 /** Marks a visit as continued, keeping what the user said they came for. */
 export function withGateVisitContinued(visits: readonly GateVisit[], visitId: string, intention: string): GateVisit[] {
-  const trimmed = intention.trim().slice(0, maxIntentionLength);
+  const trimmed = cutChars(intention.trim(), maxIntentionLength);
   return visits.map((visit) =>
     visit.id === visitId ? { ...visit, continued: true, ...(trimmed ? { intention: trimmed } : {}) } : visit,
   );

@@ -2,6 +2,7 @@ import { maxPathRules, normalizePath } from './paths';
 import { otherSitesLevel, sessionProfile } from './profiles';
 import { sitesLooser } from './sites';
 import { isStarColor, newStarColor } from './sky';
+import { cutChars } from './text';
 import { endLock } from './timer';
 import type { OtherSitesLevel, Profile, RedirectSettings, Session, SiteLevel, SiteRecipe, SiteRule } from './types';
 
@@ -258,5 +259,5 @@ export function withStarterProfilesReset(profiles: readonly Profile[], starters:
 }
 
 function cleanName(name: string): string {
-  return name.trim().replace(/\s+/g, ' ').slice(0, maxProfileNameLength);
+  return cutChars(name.trim().replace(/\s+/g, ' '), maxProfileNameLength);
 }

@@ -1,5 +1,6 @@
 import { addWeeks, weekStart } from './insights';
 import { seeded, type Star } from './sky';
+import { cutChars } from './text';
 
 // Constellations (PLAN §5): each week's stars, joined into a shape. Like the stars, they're
 // worked out from the session log every time, so the same log always gives the same sky. Only
@@ -224,7 +225,6 @@ export function constellationNames(
  * length, or undefined if there's nothing there (which goes back to the made-up name).
  */
 export function cleanedConstellationName(text: string): string | undefined {
-  // Counted in code points, as Rust counts chars, so both sides cut at the same place.
-  const cleaned = Array.from(text.replace(/\s+/g, ' ').trim()).slice(0, maxConstellationNameLength).join('').trimEnd();
+  const cleaned = cutChars(text.replace(/\s+/g, ' ').trim(), maxConstellationNameLength).trimEnd();
   return cleaned || undefined;
 }

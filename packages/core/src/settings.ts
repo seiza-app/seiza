@@ -1,4 +1,5 @@
 import { parseHttpUrl } from './match';
+import { cutChars } from './text';
 import type { GateSettings, GateWait, PageWait, Profile, RedirectSettings } from './types';
 
 /** The longest if-then plan we keep. */
@@ -38,7 +39,7 @@ export function redirectSettingsFor(profile: Profile | undefined): RedirectSetti
   return {
     gate: resolveGate(saved?.gate),
     links: (saved?.links ?? []).filter((link) => parseHttpUrl(link.url)),
-    plan: typeof saved?.plan === 'string' ? saved.plan.trim().slice(0, maxPlanLength).trim() : '',
+    plan: typeof saved?.plan === 'string' ? cutChars(saved.plan.trim(), maxPlanLength).trim() : '',
   };
 }
 

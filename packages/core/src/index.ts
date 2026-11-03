@@ -114,7 +114,6 @@ export {
   maxQuoteLength,
   pickQuote,
   quoteForDay,
-  withOwnQuote,
   withOwnQuoteRemoved,
 } from './quotes';
 export { otherSitesLevel, sessionProfile, starterProfiles } from './profiles';

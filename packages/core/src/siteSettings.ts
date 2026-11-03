@@ -1,4 +1,5 @@
 import { isSafeSelector } from './recipe';
+import { cutChars } from './text';
 import type { HiddenPart, SiteSettings } from './types';
 
 // What's set for a site outside any profile (Rust: SiteSettings in sites.rs), kept by the
@@ -23,7 +24,7 @@ export function siteSettingsFor(list: readonly SiteSettings[], recipeId: string)
 export function withHiddenPart(list: readonly SiteSettings[], recipeId: string, part: HiddenPart): SiteSettings[] {
   const selector = part.selector.trim();
   if (!isSafeSelector(selector) || selector.length > maxSelectorLength) return [...list];
-  const label = part.label.trim().slice(0, maxHiddenLabelLength);
+  const label = cutChars(part.label.trim(), maxHiddenLabelLength);
   return withSite(list, recipeId, (site) => {
     const hidden = site.hidden ?? [];
     if (hidden.length >= maxHiddenParts || hidden.some((p) => p.selector === selector)) return site;

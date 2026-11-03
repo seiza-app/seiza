@@ -7,7 +7,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "test": "vitest run",
+    "test": "TZ=America/New_York vitest run && TZ=America/Santiago vitest run",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
