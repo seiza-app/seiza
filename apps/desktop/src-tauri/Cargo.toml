@@ -61,12 +61,15 @@ objc2-core-graphics = { version = "0.3", default-features = false, features = ["
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "libc", "NSRunningApplication", "NSWorkspace"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSCalendar", "NSNotification", "NSOperation", "NSString"] }
 block2 = "0.6"
-# The blocker's helper checks who's asking (getpeereid). Already used inside Tauri.
-libc = "0.2"
 plist = "1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = "5"
+
+# The blocker's helper checks who's asking (getpeereid), and the clock reads the time since the
+# computer started (clock.rs). Already used inside Tauri.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 
 [dev-dependencies]

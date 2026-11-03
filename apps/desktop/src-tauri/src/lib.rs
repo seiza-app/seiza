@@ -5,6 +5,7 @@ pub mod bridge;
 mod browsers;
 mod calendar;
 mod capture;
+mod clock;
 mod commands;
 mod engine;
 mod error;
@@ -31,7 +32,7 @@ mod updates;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use tauri::async_runtime::JoinHandle;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
@@ -49,12 +50,7 @@ use timer::TimerEnd;
 
 const MAIN_WINDOW: &str = "main";
 
-/// The current time in epoch milliseconds, like `Date.now()`.
-pub(crate) fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as i64)
-}
+pub(crate) use clock::now_ms;
 
 pub(crate) fn engine(app: &AppHandle) -> MutexGuard<'_, Engine> {
     // A panic while the lock was held "poisons" it. The engine saves every change before
@@ -141,6 +137,7 @@ pub(crate) fn changed(app: &AppHandle) {
         let engine = engine(app);
         (engine.snapshot(now_ms()), engine.session().cloned())
     };
+    clock::hold(session.is_some());
     let _ = app.emit("snapshot", &snapshot);
     link::broadcast(app);
     if let Err(error) = tray::refresh(app, &snapshot) {
@@ -529,6 +526,46 @@ const ALERT_SOUND: &str = "Glass";
 #[cfg(not(target_os = "macos"))]
 const ALERT_SOUND: &str = "default";
 
+/// Ends a session from before Seiza last stopped (`run`), unless another computer in the sync
+/// group is still running it: then it goes on here too, and ends with theirs. Asking needs the
+/// connection to the server, so it waits a moment first, and asks again in case the network is
+/// slow to come back.
+fn end_session_from_before(app: &AppHandle, session_id: String, alive_at: i64) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        for wait in [5, 30] {
+            tokio::time::sleep(Duration::from_secs(wait)).await;
+            if sync::live::last_input_elsewhere(&app, &session_id).await.is_some() {
+                return;
+            }
+        }
+        let ended = engine(&app).end_session_from_before(&session_id, alive_at, now_ms());
+        match ended {
+            Ok(Some(_)) => {}
+            Ok(None) => return,
+            Err(error) => {
+                eprintln!("Seiza: couldn't end the session from before: {error}");
+                return;
+            }
+        }
+        changed(&app);
+        sync::exchange::fetch(&app);
+    });
+}
+
+/// Notes every minute that the running session is still running (`Engine::note_alive`).
+fn keep_alive(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            if let Err(error) = engine(&app).note_alive(now_ms()) {
+                eprintln!("Seiza: couldn't note the session is running: {error}");
+            }
+        }
+    });
+}
+
 /// Opens the window, or brings it to the front if it's already open, and fetches what the sync
 /// group's other computers sent meanwhile.
 pub(crate) fn open_window(app: &AppHandle) -> Result<()> {
@@ -582,9 +619,22 @@ pub fn run() {
             // The same folder Tauri would pick, worked out without Tauri so the bridge finds it too.
             let dir = link::data_dir().ok_or("no data folder")?;
             create_private_dir(&dir)?;
-            let engine = Engine::load(Store::open(&dir.join("lock-in.db"))?, now_ms())?;
+            let mut engine = Engine::load(Store::open(&dir.join("lock-in.db"))?, now_ms())?;
+            // A session still running is one Seiza stopped without ending: it crashed, or the
+            // computer turned off. It ends as of when it was last known to be running, as
+            // quitting would have ended it. On a computer that follows the sync group's
+            // sessions, another computer may still be running it, so they're asked first.
+            let mut from_before = engine.session().map(|s| s.id.clone()).zip(engine.last_alive()?);
+            let following = engine.sync_settings().ok().flatten().is_some_and(|s| s.follow);
+            if let Some((id, alive_at)) = from_before.as_ref().filter(|_| !following) {
+                if let Err(error) = engine.end_session_from_before(id, *alive_at, now_ms()) {
+                    eprintln!("Seiza: couldn't end the session from before: {error}");
+                }
+                from_before = None;
+            }
             let snapshot = engine.snapshot(now_ms());
             let session = engine.session().cloned();
+            clock::hold(session.is_some());
             app.manage(Mutex::new(engine));
             app.manage(TimerTask::default());
             app.manage(IdleTask::default());
@@ -618,6 +668,10 @@ pub fn run() {
             schedule_timer(app.handle(), session, snapshot.session.map(|s| s.profile_name));
             sync_blocker(app.handle());
             sync::live::watch(app.handle());
+            if let Some((id, alive_at)) = from_before {
+                end_session_from_before(app.handle(), id, alive_at);
+            }
+            keep_alive(app.handle());
             tauri::async_runtime::spawn(link::serve(app.handle().clone()));
             updates::watch(app.handle());
             match std::env::current_exe() {
