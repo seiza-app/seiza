@@ -89,7 +89,7 @@ function frame(now: number) {
 function launch() {
   const text = thought.value.trim();
   if (!text) return;
-  add(text, true);
+  add(text, !reduce);
   thought.value = '';
 }
 

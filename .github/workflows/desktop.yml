@@ -1,19 +1,22 @@
 name: Desktop
 
 # Building the Rust core takes a while, so this only runs when something it uses changes:
-# the desktop app, packages/core (its generated types and starter profiles), or this file.
+# the desktop app, packages/core (its generated types and starter profiles), packages/recipes
+# (the blocker builds in every recipe), or this file.
 on:
   push:
     branches: [main]
     paths:
       - apps/desktop/**
       - packages/core/**
+      - packages/recipes/**
       - pnpm-lock.yaml
       - .github/workflows/desktop.yml
   pull_request:
     paths:
       - apps/desktop/**
       - packages/core/**
+      - packages/recipes/**
       - pnpm-lock.yaml
       - .github/workflows/desktop.yml
 

@@ -8,6 +8,9 @@ pnpm-lock.yaml
 **/.data/
 apps/desktop/src-tauri/
 
+# Claude Code's settings and other sessions' worktrees.
+.claude/
+
 # Prose is written by hand; Prettier would reflow its tables and lists.
 *.md
 
