@@ -14,7 +14,9 @@
         <p class="kicker mono reveal"><b>03</b> · The desktop app</p>
         <h2 class="reveal" style="--d: 80ms">A night sky that fills with your focus</h2>
         <p class="lede reveal" style="--d: 160ms">
-          Outside a session, the app's sky is washed out by haze. When you lock in, it clears, and your new star forms.
+          A session can run on a focus timer and close or hide the apps you choose. Make it Hard, and ending early takes
+          an emergency pass. Outside a session, the app's sky is washed out by haze. When you lock in, it clears, and
+          your new star forms.
         </p>
         <ul class="facts">
           <li class="hud glass reveal" style="--d: 200ms">

@@ -12,6 +12,11 @@
   z-index: 1;
 }
 
+/* What Seiza is, in plain words, above the headline. */
+.hero .kicker {
+  text-wrap: balance;
+}
+
 /* A's headline. "light pollution." glows orange and flickers; locking in crossfades it to
    the wordmark's starlight-to-lavender gradient. */
 .headline {

@@ -54,6 +54,7 @@ const { locked, toggle } = useLock();
       </div>
     </div>
 
+    <p class="kicker mono reveal">A free website and app blocker for Mac and Linux</p>
     <h1 class="headline reveal">
       Social media is
       <span class="glare"

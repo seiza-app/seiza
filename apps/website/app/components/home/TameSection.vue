@@ -45,8 +45,8 @@ onBeforeUnmount(() => clearInterval(countdown));
     <p class="kicker mono reveal"><b>01</b> · The extension</p>
     <h2 class="reveal" style="--d: 80ms">Tame, don't just block.</h2>
     <p class="lede reveal" style="--d: 160ms">
-      Most blockers treat a site as all or nothing. Seiza gives every site one of four levels, chosen per profile. Try
-      them on this made-up video site.
+      Most website blockers treat a site as all or nothing. Seiza gives every site one of four levels, chosen per
+      profile. Try them on this made-up video site.
     </p>
     <div class="demo hud glass reveal" style="--d: 220ms" :data-level="level">
       <div class="levels" role="group" aria-label="Level for videos.example">
