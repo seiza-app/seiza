@@ -24,7 +24,7 @@ Existing focus apps each get part of the way there:
 - Private: no account, no telemetry, local-first
 - Every default is editable
 
-**Out of scope for now:** mobile apps. Revisit later; iOS blocking requires a paid Apple Developer account plus Apple's Family Controls approval, and AltStore/free signing can't use those APIs.
+**Phones come later** (§13): an iPhone and Android app, first as a companion (the sky, sessions, satellites and sync), then blocking apps and sites on the phone too.
 
 ---
 
@@ -537,6 +537,8 @@ Built in slices, one PR each:
 
 **Next: easy app updates** (§8, Updates): a daily update check you can turn off, each new version offered once on the Sky and then kept in Settings with a dot, and one-click Update and restart between sessions; signed update builds and `latest.json` from `release.yml`.
 
+**Phase 7: Phones** (§13): the iPhone and Android app, in the build order there. Everything is built and checked before Apple's paid account exists, so it's ready to submit once it does.
+
 **Later: the observing spot** (once the art style is chosen)
 - Your spot, the town on the horizon, decorations and companions, bought with stardust or found in rare events (§5).
 
@@ -616,6 +618,81 @@ Seiza should help because of research that has held up, not because it sounds li
 
 ---
 
+## 13. Phones (iPhone and Android)
+Planned November 2026, before Apple's paid account exists. The goal: everything built, tested as far as it can be, and ready to submit the day the account arrives. What can't be done or tested before then is said plainly below.
+
+### Decided in planning (November 2026)
+- **Companion first, then blocking.** The first version is the sky, sessions, satellites, the weekly report and sync. It needs no special permissions, so it's easy to get through review and can be tested on a real iPhone today. Blocking apps and sites on the phone comes second. On iOS that part can't be tested at all until the paid account and Apple's approval (below) exist.
+- **Android blocks with its accessibility service, plus Firefox.** The app reads which app is in front and the address in common browsers, and covers what the session restricts. Firefox for Android can also run the existing extension, for taming as on a computer.
+- **Android ships as an APK on GitHub Releases**, next to the desktop builds. It's free, with no store review. Not Google Play for now: it costs $25, a new personal account needs a closed test with 12 testers for 14 days before going public, and apps that use the accessibility service get close review. Not F-Droid for now either, since it builds from source itself, which is hard with Rust and Tauri. Either can be revisited.
+- **iOS ships on the App Store** (the only way), with TestFlight for testing.
+
+### Stack
+- **The same Tauri 2 app**, built for iOS and Android from `apps/desktop`: the same Rust core and Vue UI, so sessions, the sky, satellites, records and sync work as they do on a computer. Tauri makes the Xcode and Android Studio projects under `src-tauri/gen/apple` and `src-tauri/gen/android`, and they're kept in the repo. (The folder may be renamed `apps/app` later; not worth the churn now.)
+- **Desktop-only parts stay desktop-only**, behind `#[cfg(desktop)]` in Rust and a check in the UI: the menu bar, the Alt+P hotkey and its see-through window, updates, the browser link (Native Messaging), app rules by process, browser watching, idle time, the hosts-file blocker and its helper. The plugins for these (tray, global shortcut, updater, single instance) are desktop-only too.
+- **Native code only where the phone needs it**, as small Tauri plugins in the repo: Swift for iOS's Screen Time, Kotlin for Android's accessibility service. Everything else stays in Rust and Vue.
+- **The app's ID stays** `io.github.lock-in-focus-app.lock-in` (hidden IDs keep the old name, Context). Android's package name can't have hyphens, so it's `io.github.lock_in_focus_app.lock_in`. Both are fixed once published, so check them before the first upload.
+
+### What the phone does (first version: companion)
+- **The Sky is home**, as on a computer, laid out for a phone: the day, the sky, starting a session, thoughts for later. Tabs move to a bar along the bottom, and everything keeps clear of the notch and the home indicator. Nothing depends on hover, which the app already avoids.
+- **The sky on a phone's battery:** the same canvas, capped at 60 frames a second (phones that could do 120 don't need to), paused whenever the app isn't on screen, and drawing only what's on screen, as it already does.
+- **Sessions:** start, run and end, with the quiet timer and strictness. Phones suspend apps in the background, so a session is worked out from when it started, never from a ticking timer. When the timer is up, a notification says so (Tauri's notification plugin covers both phones). Ending for being idle doesn't apply on a phone.
+- **Satellites:** the one-line box on the Sky. There's no Alt+P on a phone. A home-screen widget or the share sheet could launch one later.
+- **The weekly report, Profiles and Settings**, with the desktop-only sections left out (above).
+- **Sync**, as on a computer (§8, Sync): join with a pairing code, or start a group on a phone. A phone shows a session started on a computer, and starts sessions the computers follow. The live connection only runs while the app is open, since phones stop it in the background, so a session started elsewhere shows up when the app is opened next. Getting it there sooner needs push notifications, which a self-hosted server can't send without Apple's and Google's keys. That waits for a hosted tier, if it comes.
+- **The tour**, shortened for a phone.
+
+### Blocking on the phone (second)
+- **iPhone, with Apple's Screen Time API** (Family Controls, Managed Settings, Device Activity):
+  - **Apps:** each profile gets a list of iPhone apps, chosen with Apple's own picker. Apple only gives the app an unreadable token for each app chosen, so the list belongs to that phone and doesn't sync; a profile's Mac app rules stay on the Mac.
+  - **Sites:** a profile's Restricted sites are shielded in Safari and apps that show web pages, by name, so they do sync. Shields can't redirect, so on an iPhone a Redirected site is covered like a Restricted one.
+  - **The shield** (what shows over a blocked app or site) is drawn in Seiza's look: the night sky, which session it's for, and its strictness.
+  - **Shields lift on time** even if the app is closed: a Device Activity schedule for the session's length ends them.
+  - **Hard sessions can't be airtight here:** the person can always take back Screen Time access in iOS Settings. Seiza says so plainly and doesn't try to stop it.
+  - **Taming in Safari:** the extension, built for Safari by WXT, goes inside the iPhone app. It tames sites as it does on a computer, and reads the running session from storage shared with the app (an App Group). Safari doesn't take every rule other browsers do (its redirect rules have been limited), so each one is checked there.
+  - **Apple's approval:** each part that uses Screen Time (the app, the Device Activity monitor, the shield's look) needs Family Controls (Distribution) approved by Apple, one request per bundle ID. Some developers waited weeks in 2026. Ask the day the account exists.
+  - **Building it in Xcode:** Screen Time's extensions and the Safari extension are extra targets in the Xcode project. Tauri makes that project from an XcodeGen template, so Seiza keeps its own template (`bundle › iOS › template`) with the extra targets in it, rather than editing generated files.
+  - **What can't be tested before the account:** Screen Time doesn't work in the simulator, and a free Apple ID can't use it on a real phone. It's written, built and covered by unit tests beforehand; trying it for real waits.
+- **Android, with its accessibility service:**
+  - **Apps:** when an app the session restricts comes to the front, Seiza covers it with its own page, the same as Close on a computer.
+  - **Sites:** the address in Chrome, Firefox, Edge, Brave and Samsung Internet is read from their address bars (each browser's own field, checked per browser). A Restricted site is covered; a Redirected one opens its redirect.
+  - **Taming:** in Firefox for Android, through the extension from Firefox Add-ons, once it's checked there and marked as working on Android. There's no browser link on a phone, so it runs on its own there, as it already can.
+  - **Battery:** the service only listens for an app coming to the front and for those browsers' address bars, and does nothing outside a session.
+  - **Turning it on:** a page in the app says what the service reads (which app is in front, and the browser's address) and that nothing leaves the phone, with **Turn on** and **Not now**. Since Android 13, an app installed from outside a store has to be allowed "restricted settings" first (App info › ⋮ › Allow restricted settings), so the page walks through that in plain steps. Some phones put it elsewhere, so check on a few.
+  - **Everything can be tested before release** in the Android emulator.
+
+### Releases
+- **Android:** `release.yml` builds a signed APK for 64-bit phones (arm64) onto the same draft release, and the website's Install section links straight to it. Updates come from the app's own update check, which offers the new APK and hands it to Android's installer. Google's developer verification for apps installed from outside a store started in four countries in September 2026 and is planned everywhere in 2027. Watch for it; it may mean registering as a developer.
+- **iPhone:** `pnpm tauri ios build` makes the archive to upload, and the store text, screenshots and privacy answers live in the repo (as `STORE.md` does for the extension). In App Store Connect's privacy questions, Seiza collects no data: sync goes to the person's own server, encrypted. Sync's encryption means answering the export questions (check which applies before submitting).
+- **CI** builds the Android app and the iPhone app (for the simulator) on every push, so neither drifts.
+
+### Done by hand, with the accounts
+- **Android:** make the release signing key, and keep it and its password in GitHub's secrets. Seiza can't take it back if it's lost, so back it up too.
+- **When the time comes:**
+  - join the Apple Developer Program ($99 a year);
+  - register the bundle IDs and ask for Family Controls (Distribution) for each straight away;
+  - make the signing certificate and profiles, and put them in GitHub's secrets for CI;
+  - set up the App Store Connect listing.
+- **Before then:** run the companion on your own iPhone from Xcode with a free Apple ID. It needs re-installing every 7 days, and Screen Time won't work, but everything else will.
+
+### Build order, one PR each
+1. **The core builds for phones:** the desktop-only parts behind `cfg(desktop)`, `tauri ios init` and `tauri android init`, the generated projects in the repo, and CI building both. The desktop app doesn't change.
+2. **Phone layouts:** every page at phone widths, the bottom tab bar, safe areas, desktop-only settings hidden, and the sky's frame rate and pausing.
+3. **Sessions and satellites on the phone:** the timer from the start time, the notification when it's up, and the satellite box.
+4. **Sync on the phone:** pairing, the live connection while open, fetching when the app comes back to the front, following sessions.
+5. **First release:** the Android APK in `release.yml`, the update check on Android, the website's Install links, and everything the iPhone needs ready to submit.
+6. **Android blocking:** the Kotlin plugin and accessibility service, the page to turn it on, and the extension checked in Firefox for Android.
+7. **iPhone blocking:** the Swift plugin, Screen Time for apps and Restricted sites, the Device Activity schedule and the shield's look, in Seiza's own XcodeGen template. Built and unit-tested before the account; tested for real after.
+8. **Taming in Safari:** the extension as a Safari web extension inside the iPhone app, sharing the session through the App Group.
+9. **The App Store:** once Family Controls is approved, test on a real iPhone, TestFlight, then submit.
+
+### Left out for now
+- Google Play and F-Droid (above).
+- Push notifications for live sessions (above).
+- Widgets, Live Activities on the lock screen and Apple Watch: maybe later, once the app is out.
+
+---
+
 ## Sources
 - Freedom: [free vs premium](https://support.freedom.to/en/articles/13764747-what-s-included-in-free-and-premium-plans), [features](https://api.freedom.to/features)
 - Focus Friend: [App Store](https://apps.apple.com/US/app/id6742278016), [review](https://makeheadway.com/blog/focus-friend-app-review/)
@@ -624,7 +701,10 @@ Seiza should help because of research that has held up, not because it sounds li
 - Cold Turkey (random-text unlock, Frozen Turkey): [TechRadar](https://www.techradar.com/reviews/cold-turkey)
 - SocialFocus: [socialfocus.app](https://socialfocus.app/)
 - Open-source prior art: [Focuser (Rust/Tauri)](https://github.com/aadeshrao123/Focuser/)
-- iOS limits (deferred): [Screen Time API in 2026](https://dev.to/twillywill/the-ios-screen-time-api-in-2026-what-apples-docs-dont-tell-you-151e), [Personal Team can't use Family Controls](https://hsb.horse/en/blog/personal-team-family-controls-limitation/)
+- Phones (§13):
+  - iOS: [Screen Time API in 2026](https://dev.to/twillywill/the-ios-screen-time-api-in-2026-what-apples-docs-dont-tell-you-151e), [Personal Team can't use Family Controls](https://hsb.horse/en/blog/personal-team-family-controls-limitation/), [Family Controls distribution, one request per bundle ID](https://newly.app/how-to/family-controls-entitlement), [waits reported in 2026](https://developer.apple.com/forums/thread/809190), [Screen Time needs a real device](https://developer.apple.com/forums/thread/750200), [blocking in a Safari web extension](https://developer.apple.com/documentation/safariservices/blocking-content-with-your-safari-web-extension)
+  - Tauri on iOS: [the XcodeGen template](https://docs.rs/crate/tauri-cli/latest/source/templates/mobile/ios/project.yml), [adding an extension target](https://docs.rs/crate/tauri-plugin-mobile-sharetarget/latest)
+  - Android: [restricted settings for sideloaded apps](https://9to5google.com/2024/09/12/android-15-sideloaded-apps-restrictions/), [developer verification](https://android-developers.googleblog.com/2026/06/android-developer-verification.html), [Play's accessibility rules](https://support.google.com/googleplay/android-developer/answer/10964491) (for if Play comes later), [the 12-tester rule](https://support.google.com/googleplay/android-developer/answer/14151465)
 - Tauri 2: [roadmap / plugins](https://v2.tauri.app/blog/roadmap-to-tauri-2-0/)
 - Research (§12):
   - Allcott, Gentzkow & Song (2022), [Digital Addiction](https://www.nber.org/papers/w28936), *American Economic Review*
